@@ -20,7 +20,154 @@ my-climate-project/
 ├── requirements.txt        # Python libs: xarray, shiny, netCDF4, etc.
 └── Project.toml            # Julia libs: Shapefile, PolygonOps, NPZ
 
+Based on your project architecture and description, here is a complete and rich work pipeline. This pipeline is designed to be **modular, reproducible (via DVC), and high-performance (using Julia for geometry and Python/Shiny for the interface).**
 
+### **Phase 1: Foundation & Environment Setup**
+
+**Objective:** Create a robust environment that handles 20GB+ of data without crashing Git, while enabling both Python and Julia workflows.
+
+1.  **Repository Initialization**
+
+      * Initialize Git: `git init`
+      * Initialize DVC: `dvc init`
+      * **Crucial Step:** Configure DVC storage (e.g., local drive, S3, or Google Drive) to handle the large files.
+          * `dvc remote add -d myremote <url_to_storage>`
+      * Create `.gitignore`: Add `data/`, `.venv/`, `.DS_Store`, and `*.nc`.
+
+2.  **Environment Setup (Dual Language)**
+
+      * **Python (I/O & Interface):** Create a virtual environment (`.venv`). Install requirements:
+          * `xarray[complete]`, `netCDF4`, `dask` (for parallel processing), `cdsapi` (for ERA5 download), `shiny` (for the dashboard), `rsconnect-python`.
+      * **Julia (Computational Engine):** Initialize the project (`julia --project=.`). Add packages:
+          * `Pkg.add(["Shapefile", "PolygonOps", "NPZ", "DataFrames", "NetCDF"])`.
+
+3.  **Asset Acquisition (Shapefiles)**
+
+      * Download official French administrative geometries from the **[gregoiredavid/france-geojson](https://github.com/gregoiredavid/france-geojson)** repository.
+      * Place them in `data/shapefiles/` (e.g., `regions.geojson`, `departements.geojson`).
+      * **Track with DVC:** `dvc add data/shapefiles/`.
+
+-----
+
+### **Phase 2: The Ingestion Pipeline (Python)**
+
+**Objective:** Download 74 years of hourly data (1950–2024) safely.
+
+  * **Script:** `src/download.py`
+  * **Logic:**
+      * Do **not** attempt to download 74 years in a single request (it will timeout).
+      * Write a loop that iterates **year by year**.
+      * Use the `cdsapi` client to fetch data.
+      * Check if the file `data/raw/era5_temperature_{YEAR}.nc` exists before downloading (idempotency).
+  * **DVC Integration:**
+      * Define this stage in `dvc.yaml` as `ingest`.
+      * **Dependencies:** `src/download.py`
+      * **Outputs:** `data/raw/` (This folder will be tracked by DVC, keeping your Git repo light).
+
+-----
+
+### **Phase 3: The Aggregation Engine (Python)**
+
+**Objective:** Reduce data volume by \~730x (Hourly $\rightarrow$ Monthly) to make the dashboard responsive.
+
+  * **Script:** `src/aggregate.py`
+  * **Logic:**
+      * Use **Xarray** with **Dask** for lazy loading (crucial for 20GB+ data).
+      * Load all raw files: `ds = xr.open_mfdataset('data/raw/*.nc', parallel=True)`.
+      * Resample to monthly means: `ds_monthly = ds.resample(time='1M').mean()`.
+      * Save the result as a single "optimized" chunked NetCDF: `data/processed/temperature_monthly_1950_2024.nc`.
+  * **DVC Integration:**
+      * Stage name: `process`.
+      * **Dependencies:** `data/raw/`, `src/aggregate.py`.
+      * **Outputs:** `data/processed/`.
+
+-----
+
+### **Phase 4: The Spatial Masking Engine (Julia)**
+
+**Objective:** Create high-precision spatial masks using Julia's speed for geometry.
+
+  * **Script:** `src/make_masks.jl`
+  * **The "Secret Sauce" (Sub-pixel Weighting):**
+      * Instead of a simple binary mask (Inside/Outside), calculate **Fractional Weights**.
+      * Read the grid coordinates from the processed NetCDF.
+      * Load the Shapefiles (Regions/Departments).
+      * For each pixel, subdivide it (e.g., into a 10x10 sub-grid). Calculate how many sub-points fall inside the region polygon.
+      * Result: A value between `0.0` (Ocean) and `1.0` (Land), allowing for smooth coastline handling.
+      * Save these masks as `data/masks/mask_{region_id}.nc`.
+  * **DVC Integration:**
+      * Stage name: `masking`.
+      * **Dependencies:** `data/processed/`, `data/shapefiles/`, `src/make_masks.jl`.
+      * **Outputs:** `data/masks/`.
+
+-----
+
+### **Phase 5: The Interactive Dashboard (Quarto + Shiny)**
+
+**Objective:** Visualize the data without loading 20GB into memory.
+
+  * **File:** `analysis/dashboard.qmd`
+  * **Architecture:**
+      * **Format:** `format: dashboard` with `server: shiny` (Python backend).
+      * **UI (Sidebar):**
+          * `input_select("region", ...)`: Select between Regions/Departments.
+          * `input_slider("year_range", ...)`: Filter the time period (1950–2024).
+          * `input_select("month", ...)`: Filter specific months (e.g., "Only January" to see winter warming).
+      * **Server Logic (Python):**
+          * Load the **Processed** (Monthly) data (approx. 500MB, fits in RAM).
+          * Load the **Mask** corresponding to the selected region on-the-fly.
+          * **Fast Math:** `result = ds_monthly * mask_region`.
+          * Calculate the spatial average and render the plot using `matplotlib` or `plotly`.
+
+-----
+
+### **Phase 6: Orchestration (DVC)**
+
+**Objective:** Automate the entire workflow.
+
+Create a `dvc.yaml` file to link these steps. This allows you to update the entire pipeline with one command.
+
+```yaml
+stages:
+  ingest:
+    cmd: python src/download.py
+    deps:
+      - src/download.py
+    outs:
+      - data/raw/
+
+  aggregate:
+    cmd: python src/aggregate.py
+    deps:
+      - src/aggregate.py
+      - data/raw/
+    outs:
+      - data/processed/
+
+  masking:
+    cmd: julia src/make_masks.jl
+    deps:
+      - src/make_masks.jl
+      - data/processed/
+      - data/shapefiles/
+    outs:
+      - data/masks/
+```
+
+**How to run:**
+
+  * **Update Data:** `dvc repro` (DVC checks which steps need re-running based on file changes).
+  * **Visualizing:** `quarto preview analysis/dashboard.qmd`.
+
+### **Summary of Tools & Roles**
+
+| Component | Tool | Why? |
+| :--- | :--- | :--- |
+| **Orchestration** | **DVC** | Tracks 20GB+ of data and defines the dependency graph (DAG). |
+| **Ingestion** | **Python (cdsapi)** | Standard, reliable API client for Climate Data Store. |
+| **Processing** | **Python (Xarray)** | Best-in-class for handling labeled multi-dimensional arrays (NetCDF). |
+| **Geometry** | **Julia** | Significantly faster than Python for looping through millions of "Point-in-Polygon" checks. |
+| **Dashboard** | **Quarto + Shiny** | Combines the narrative of a report with the interactivity of an app. |
 
 This work pipeline is designed to be **dense and actionable**, guiding you from an empty folder to a deployed, high-performance climate dashboard. It follows the **Hybrid Architecture** (Python + Julia + DVC + Quarto).
 
