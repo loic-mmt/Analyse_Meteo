@@ -1,3 +1,27 @@
+
+my-climate-project/
+├── .dvc/                   # DVC internal configuration
+├── .github/                # CI/CD workflows (optional)
+├── data/
+│   ├── raw/                # [DVC Tracked] Hourly .nc files (1950-2024)
+│   ├── processed/          # [DVC Tracked] optimized monthly/yearly means
+│   ├── shapefiles/         # [DVC Tracked] Raw geometries (Regions, Depts)
+│   └── masks/              # [DVC Tracked] Pre-computed boolean NetCDF masks
+├── src/                    # Pipeline Scripts
+│   ├── download.py         # Fetch data via API (Python)
+│   ├── aggregate.py        # Resample hourly -> monthly (Python/Xarray)
+│   └── make_masks.jl       # Generate boolean masks from shapes (Julia)
+├── analysis/               # Quarto Environment
+│   ├── _quarto.yml         # Project configuration
+│   ├── spatial_masking.qmd # Static Report: Deep dive methodology (Py+Jl)
+│   └── dashboard.qmd       # Interactive App: Shiny Server + OJS UI
+├── dvc.yaml                # The Orchestrator: Defines the 3 pipeline stages
+├── dvc.lock                # The Snapshot: Exact versions of data used
+├── requirements.txt        # Python libs: xarray, shiny, netCDF4, etc.
+└── Project.toml            # Julia libs: Shapefile, PolygonOps, NPZ
+
+
+
 This work pipeline is designed to be **dense and actionable**, guiding you from an empty folder to a deployed, high-performance climate dashboard. It follows the **Hybrid Architecture** (Python + Julia + DVC + Quarto).
 
 ### **Phase 1: Foundation & Environment (Day 1)**
