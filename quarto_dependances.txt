@@ -1,0 +1,73 @@
+DEPENDENCY MANUAL AND TECHNICAL ARCHITECTURE
+
+PROJECT: Meteo Analysis (France Climate)
+
+1. CONCEPT: PURPOSE OF TOOLS
+
+This project constitutes a complete data application.
+Quarto acts as the orchestrator, assembling analyses (Python) and text to generate the final website. It performs no direct calculations but delegates these operations to the Python environment detailed below.
+
+2. SYSTEM DEPENDENCIES (FOUNDATIONS)
+
+
+* DVC (Data Version Control)
+  - General Role: Versioning large files not managed by Git.
+  - PROJECT CONTEXT: Management of voluminous NetCDF files (`era5_t2m_*.nc`) and the shapefiles directory (`masque_simplemaps/`). Enables population of the `data/` directory upon startup.
+  - Linked File: `daaata.dvc`
+
+* Quarto CLI
+  - General Role: Compiling code and text into HTML.
+  - PROJECT CONTEXT: Transformation of the `transfert_quarto.qmd` file into an interactive web dashboard.
+
+3. PYTHON DEPENDENCIES (THE ENGINE)
+
+These libraries constitute the core of the system and must appear in the `requirements.txt` file.
+
+A. The Bridge to Quarto
+* jupyter & ipykernel
+  - Role: Enabling communication between Quarto and Python.
+  - PROJECT CONTEXT: Indispensable for the execution of `{python}` code blocks present in `transfert_quarto.qmd`.
+
+B. Web Interactivity
+* shiny
+  - Role: Creation of interactive sliders and menus.
+  - PROJECT CONTEXT: Utilization within the dashboard to allow changing the displayed year or region without reloading the page.
+
+C. Data Acquisition
+* cdsapi
+  - Role: Client for the Copernicus Climate Data Store API.
+  - PROJECT CONTEXT: Utilization by the script `loic/download.py` for downloading ERA5 reanalysis data (2m Temperature).
+
+D. Data Processing
+* xarray
+  - Role: Manipulation of multidimensional data cubes (Labelled Data Arrays).
+  - PROJECT CONTEXT: Primary library used in `plot_temp.ipynb` for opening `.nc` files and selecting dimensions (latitude, longitude, time).
+
+* netCDF4
+  - Role: File reading driver.
+  - PROJECT CONTEXT: Mandatory dependency (though invisible) for the opening of `test_era5_t2m_*.nc` files by xarray.
+
+* pandas
+  - Role: Manipulation of classic tabular data.
+  - PROJECT CONTEXT: Utilization for manipulating time series after calculation of spatial means (e.g., CSV `reanalysis-era5-land...csv`).
+
+E. Geography and Visualization
+* geopandas
+  - Role: Manipulation of geometric data.
+  - PROJECT CONTEXT: Utilization for reading shapefiles (`masque_simplemaps/*.shp`) and clipping the map of France.
+
+* shapely
+  - Role: Geometric calculation engine.
+  - PROJECT CONTEXT: Execution of intersection operations (e.g., determining if a pixel belongs to a given region) used in the notebooks.
+
+* matplotlib
+  - Role: Creation of charts and plots.
+  - PROJECT CONTEXT: Generation of temperature heatmaps displayed in the report.
+
+4. JULIA DEPENDENCIES (ACCELERATOR - OPTIONAL)
+
+Note: These tools serve solely for data *preparation*, not for site display.
+
+* Shapefile.jl & PolygonOps.jl
+  - PROJECT CONTEXT: Replacement of Geopandas for the mask creation step (rasterization). Accelerated processing of files in the `masque_simplemaps` directory for generating `.nc` weight files.
+
