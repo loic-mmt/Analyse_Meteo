@@ -1,189 +1,194 @@
-# Quarto Dependencies – Python & Julia Climate Project
+# Quarto, Python & Julia – Project Interaction Recap
 
-This document summarizes all required dependencies to run a **Quarto-based climate/meteorological data analysis project** using **Python and Julia** (ERA5 / NetCDF workflow).
+## 1. What Quarto Is in This Project
 
----
+Quarto is **not the computation engine**. It is the **orchestrator and UI layer** that:
 
-## 1. Core Requirement: Quarto
+* Renders static reports (`spatial_masking.qmd`)
+* Hosts the interactive dashboard (`dashboard.qmd`)
+* Executes **Python and Julia code in isolated kernels**
+* Manages the final outputs (HTML, dashboard, plots)
 
-Quarto is the main tool used to render reproducible reports (HTML, PDF, Word).
-
-Install Quarto:
-[https://quarto.org/download/](https://quarto.org/download/)
-
-Check installation:
-
-```
-quarto --version
-```
-
-Note: Pandoc is already included with Quarto.
+Quarto does **not replace DVC, Python, or Julia**. It only connects them.
 
 ---
 
-## 2. Python Environment
+## 2. Core Project Dependencies
 
-### Python Version
+### Python Dependencies (`requirements.txt`)
 
-Recommended:
+Used for:
 
-* Python ≥ 3.9
+* Data download
+* NetCDF processing
+* Dashboard backend
 
-Check:
+Main libraries:
 
-```
-python --version
-```
+* `xarray`
+* `netCDF4`
+* `dask`
+* `cdsapi`
+* `shiny`
+* `plotly` or `matplotlib`
 
-### Jupyter (Required for Quarto execution)
+### Julia Dependencies (`Project.toml`)
 
-```
-pip install jupyter
-```
+Used for:
 
-Check:
+* Spatial geometry
+* Mask computation
 
-```
-jupyter --version
-```
+Main libraries:
 
----
+* `Shapefile`
+* `PolygonOps`
+* `NetCDF`
+* `NPZ`
+* `DataFrames`
 
-## 3. Required Python Libraries (Climate & Geospatial)
+### Quarto Dependencies
 
-Install everything at once:
+Quarto itself depends on:
 
-```
-pip install xarray netcdf4 numpy pandas matplotlib geopandas rioxarray shapely cartopy cdsapi
-```
-
-Library roles:
-
-* xarray → read and process NetCDF (.nc) files
-* netcdf4 → NetCDF backend
-* numpy → numerical computations
-* pandas → time series handling
-* matplotlib → plotting
-* geopandas → spatial masks (France shapefile)
-* rioxarray → raster spatial clipping
-* shapely → geometry operations
-* cartopy → map visualization
-* cdsapi → access Copernicus ERA5 API
+* **Python kernel (Jupyter)**
+* **Julia kernel**
+* **Node.js (for dashboard & JS components)**
+* **Shiny for Python**
 
 ---
 
-## 4. Julia Environment
+## 3. How a Quarto File Is Structured
 
-### Install Julia
+A `.qmd` file always has:
 
-[https://julialang.org/download/](https://julialang.org/download/)
+### 1. YAML Header (configuration)
 
-Check:
+Defines:
 
-```
-julia --version
-```
+* Output format (html, dashboard)
+* Server mode (shiny)
+* Which engines are used
 
-### Recommended Julia Packages
-
-Inside Julia:
-
-```
-using Pkg
-Pkg.add(["NetCDF", "NCDatasets", "DataFrames", "Plots", "Statistics", "GeoData", "ArchGDAL"])
-```
-
-Package roles:
-
-* NetCDF / NCDatasets → read .nc climate files
-* DataFrames → tabular data
-* Plots → visualization
-* Statistics → mean, anomaly, etc.
-* GeoData / ArchGDAL → spatial processing
-
----
-
-## 5. PDF Export (Optional but Recommended)
-
-If PDF output is required:
-
-### Windows:
-
-* Install MiKTeX → [https://miktex.org](https://miktex.org)
-
-### macOS:
-
-* Install MacTeX → [https://tug.org/mactex/](https://tug.org/mactex/)
-
-Check:
-
-```
-pdflatex --version
-```
-
-Without LaTeX, PDF rendering will fail.
-
----
-
-## 6. Quarto Kernel Configuration
-
-### Python in Quarto (.qmd):
+Example:
 
 ```yaml
-execute:
-  kernel: python3
+---
+title: "Climate Dashboard"
+format: dashboard
+server: shiny
+---
 ```
 
-### Julia in Quarto:
+### 2. Code Cells (Python or Julia)
 
-```yaml
-execute:
-  kernel: julia
+Each cell explicitly selects its language:
+
+```python
+#| echo: false
+import xarray as xr
 ```
 
-Make sure the Julia kernel is available in Jupyter:
+```julia
+#| echo: false
+using NetCDF, Shapefile
+```
 
-```
-julia
-using IJulia
-```
+### 3. UI + Logic (for dashboard)
+
+* UI inputs (sliders, selects)
+* Reactive Python backend (Shiny)
 
 ---
 
-## 7. VS Code Recommendations
+## 4. Python ↔ Julia Interaction Problem
 
-Strongly recommended tools:
+⚠️ **Python and Julia do NOT share memory inside Quarto.**
+They run in **separate kernels**.
 
-* Visual Studio Code
-* Quarto VS Code Extension
-* Python Extension
-* Julia Extension
+So this is **NOT possible**:
 
-Optional:
-
-* Git (version control)
-* QGIS (spatial verification)
+* Create object in Julia → reuse directly in Python
+* Pass arrays directly between languages in RAM
 
 ---
 
-## 8. Typical Project Workflow
+## 5. The Correct Way to Connect Python & Julia
 
-1. Download ERA5-Land data with cdsapi
-2. Load NetCDF with xarray (Python) or NCDatasets (Julia)
-3. Apply France spatial mask
-4. Compute spatial averages
-5. Compute climatology and anomalies
-6. Plot results
-7. Render final report with Quarto (HTML/PDF)
+✅ The only reliable method is **file-based communication**:
+
+### The Standard Workflow
+
+1. **Julia computes masks**
+
+   * Input: NetCDF + Shapefiles
+   * Output: `data/masks/mask_region.nc`
+
+2. **Python loads masks**
+
+   * Reads the `.nc` masks
+   * Applies them to the climate dataset
+
+This is exactly what your pipeline already does:
+
+| Step                | Language | I/O                     |
+| ------------------- | -------- | ----------------------- |
+| Download ERA5       | Python   | raw `.nc`               |
+| Monthly aggregation | Python   | processed `.nc`         |
+| Spatial masks       | Julia    | mask `.nc`              |
+| Dashboard           | Python   | reads processed + masks |
 
 ---
 
-## 9. Minimal Dependency Checklist
+## 6. Temporary Files Strategy
 
-* Quarto installed ✅
-* Python ≥ 3.9 ✅
-* Julia ✅
-* Jupyter ✅
-* Climate Python libraries ✅
-* Julia NetCDF + plotting packages ✅
-* LaTeX (for PDF) ✅ (optional)
+If tight coupling is required inside a Quarto report:
+
+### Julia → Temp File
+
+```julia
+using NPZ
+npzwrite("temp_mask.npz", mask_array)
+```
+
+### Python → Read Temp File
+
+```python
+import numpy as np
+mask = np.load("temp_mask.npz")["arr_0"]
+```
+
+⚠️ This is slower than NetCDF but useful for debugging or experiments.
+
+---
+
+## 7. Who Does What (Final Architecture)
+
+| Component        | Role                                      |
+| ---------------- | ----------------------------------------- |
+| **DVC**          | Pipeline orchestration & reproducibility  |
+| **Python**       | API, NetCDF processing, dashboard backend |
+| **Julia**        | Heavy geometry & spatial precision        |
+| **Quarto**       | Report rendering + interactive UI         |
+| **NetCDF Files** | Communication bridge                      |
+
+---
+
+## 8. Key Rule (Very Important)
+
+> **Quarto does not replace the data pipeline.
+> It only visualizes the final products generated by Python & Julia.**
+
+All heavy computation must stay in:
+
+* `src/aggregate.py`
+* `src/make_masks.jl`
+
+The `.qmd` files should only:
+
+* Load
+* Filter
+* Visualize
+
+
+lia → Python temp-file example specifically for masks**
