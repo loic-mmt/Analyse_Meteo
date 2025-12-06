@@ -1,6 +1,7 @@
 import cdsapi
 import xarray as xr
 import pandas as pd
+import time
 
 # 1) Connexion à l'API CDS
 c = cdsapi.Client()
@@ -11,26 +12,30 @@ area_fr = [51.5, -5.5, 41.0, 9.8]
 
 # Paramètres de date
 year = "2025"
-month = "01"
-day = "01"
 
-# 3) Liste des heures à télécharger
+# 3) Liste des mois à télécharger (ici: janvier et février)
+months = ["01", "02"]
+
+# 4) Liste des jours (01 à 31) – CDS gère les jours inexistants selon le mois
+days = [f"{d:02d}" for d in range(1, 32)]
+
+# 5) Liste des heures à télécharger (toutes les heures)
 # -> toutes les heures
 times = [f"{h:02d}:00" for h in range(24)]
-# times = ["00:00", "01:00", "02:00", "03:00"]
 
 # Nom du fichier NetCDF de sortie
-nc_file = f"era5_t2m_{year}{month}{day}_fr.nc"
+nc_file = f"era5_t2m_{year}_{'-'.join(months)}_fr.nc"
 
 # 4) Téléchargement ERA5 (T2m, France, plusieurs heures)
+start_time = time.time()
 c.retrieve(
     "reanalysis-era5-single-levels",
     {
         "product_type": "reanalysis",
         "variable": ["2m_temperature"],
         "year": year,
-        "month": month,
-        "day": day,
+        "month": months,
+        "day": days,
         "time": times,
         "area": area_fr,
         "grid": [0.25, 0.25],
@@ -38,6 +43,8 @@ c.retrieve(
     },
     nc_file,
 )
+elapsed = time.time() - start_time
+print(f"Téléchargement terminé en {elapsed:.1f} secondes") # 2 mois en 78 secondes
 
 # 5) Ouverture du NetCDF et conversion en DataFrame
 ds = xr.open_dataset(nc_file)
