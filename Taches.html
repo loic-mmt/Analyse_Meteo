@@ -3,7 +3,13 @@ git commit -m "modif plot_temp"
 git push origin main
 
 dvc add data/raw/era5_temp_1950.nc
+dvc push
 
+# Pull only the year 1985
+dvc pull data/raw_yearly/1985.nc
+
+# OR Pull the whole decade of the 1980s
+dvc pull data/raw_yearly/198*.nc
 
 Here is the precise, code-level implementation for each step of your pipeline. This guide provides the specific contents for the files in your architecture.
 
