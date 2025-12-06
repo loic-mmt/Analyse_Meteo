@@ -2,3 +2,6 @@
     remote = remotemeteo
 ['remote "remotemeteo"']
     url = gdrive://1A253rwWhOhDpeWjPEozSw4ezv2CQ9t7X
+    gdrive_client_id = 1089406668052-ku03rqr0rqa6b5eo5m3nobvvlep1tq7u.apps.googleusercontent.com
+    gdrive_client_secret = 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
+    gdrive_use_service_account = false
