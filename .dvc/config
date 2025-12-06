@@ -1,0 +1,4 @@
+[core]
+    remote = remotemeteo
+['remote "remotemeteo"']
+    url = gdrive://1A253rwWhOhDpeWjPEozSw4ezv2CQ9t7X
