@@ -191,4 +191,100 @@ The `.qmd` files should only:
 * Visualize
 
 
-lia → Python temp-file example specifically for masks**
+Julia → Python temp-file example specifically for masks**
+
+Ce qu'il faut installer :
+nstallation des dépendances pour le projet my-climate-project
+1️⃣ Python
+
+Créer un environnement virtuel (recommandé) :
+
+cd my-climate-project
+python -m venv .venv
+
+
+Activer l’environnement :
+
+Windows (PowerShell) :
+
+.venv\Scripts\Activate.ps1
+
+
+Windows (cmd) :
+
+.venv\Scripts\activate.bat
+
+
+Installer les bibliothèques Python :
+
+pip install --upgrade pip
+pip install -r requirements.txt
+
+
+Cela installe toutes les bibliothèques nécessaires : xarray, netCDF4, pandas, numpy, shiny, etc.
+
+2️⃣ Julia
+
+Installer Julia depuis https://julialang.org/download/
+.
+
+Dans Julia, activer l’environnement du projet et installer les packages :
+
+using Pkg
+Pkg.activate(".")
+Pkg.instantiate()
+
+
+Cela installe tous les packages listés dans Project.toml : Shapefile, PolygonOps, NPZ, etc.
+
+3️⃣ Quarto
+
+Installer Quarto depuis https://quarto.org/download/
+.
+
+Vérifier l’installation :
+
+quarto --version
+
+
+Assurer que les kernels Python et Julia sont disponibles pour Quarto.
+
+Pour Julia :
+
+using IJulia
+
+4️⃣ DVC (Data Version Control)
+
+Installer DVC :
+
+pip install dvc
+
+
+Initialiser DVC dans le projet :
+
+dvc init
+
+
+Ajouter les dossiers de données à suivre :
+
+dvc add data/raw
+dvc add data/processed
+
+
+Committer les fichiers .dvc et dvc.lock dans Git.
+
+Les fichiers temporaires dans data/temp/ ne doivent pas être suivis par DVC. Ils servent uniquement à échanger des données Python ↔ Julia.
+
+5️⃣ Fichiers temporaires
+
+Ils permettent à Python et Julia d’échanger des données dans Quarto.
+
+Formats recommandés : CSV, NetCDF, Parquet, HDF5.
+
+Exemple :
+
+Python écrit : df.to_csv("data/temp/temp.csv", index=False)
+
+Julia lit : df = CSV.read("data/temp/temp.csv", DataFrame)
+
+Cette méthode est stable, reproductible et indépendante du langage.
