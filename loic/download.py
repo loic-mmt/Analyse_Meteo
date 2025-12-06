@@ -17,8 +17,7 @@ day = "01"
 # 3) Liste des heures à télécharger
 # -> toutes les heures
 times = [f"{h:02d}:00" for h in range(24)]
-# si tu veux seulement 00h, 06h, 12h, 18h :
-# times = ["00:00", "06:00", "12:00", "18:00"]
+# times = ["00:00", "01:00", "02:00", "03:00"]
 
 # Nom du fichier NetCDF de sortie
 nc_file = f"era5_t2m_{year}{month}{day}_fr.nc"
@@ -43,8 +42,8 @@ c.retrieve(
 # 5) Ouverture du NetCDF et conversion en DataFrame
 ds = xr.open_dataset(nc_file)
 
-# La variable s'appelle généralement "t2m"
-# On convertit en DataFrame avec les colonnes lon/lat/time/t2m
+
+# DataFrame avec colonnes lon/lat/time/t2m
 df = ds["t2m"].to_dataframe().reset_index()
 
 # Optionnel : conversion en °C
