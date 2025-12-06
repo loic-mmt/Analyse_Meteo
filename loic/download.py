@@ -49,7 +49,12 @@ df = ds["t2m"].to_dataframe().reset_index()
 # Optionnel : conversion en °C
 df["t2m_c"] = df["t2m"] - 273.15
 
-# 6) Export en CSV
+
+print("Terminé ! Fichier créé :")
+print(" -", nc_file)
+
+
+"""# 6) Export en CSV
 csv_file = f"era5_t2m_{year}{month}{day}_fr_all_hours.csv"
 df.to_csv(csv_file, index=False)
 
@@ -58,3 +63,4 @@ ds.close()
 print("Terminé ! Fichiers créés :")
 print(" -", nc_file)
 print(" -", csv_file)
+"""
