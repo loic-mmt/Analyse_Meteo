@@ -1,0 +1,126 @@
+Temporary Files – What, Why, and How (Python ↔ Julia / Quarto)
+1. What Are Temporary Files?
+
+Temporary files are intermediate files used to exchange data between Python and Julia or to store intermediate computation results.
+In the context of Quarto + DVC pipelines, they allow each language to work in isolation while sharing necessary data.
+
+Typical location in your project:
+
+my-climate-project/data/temp/
+
+2. Why They Are Needed
+
+Python and Julia run in separate kernels in Quarto.
+
+❌ Variables created in Python cannot be directly accessed in Julia, and vice versa.
+
+✅ Temporary files act as a bridge, enabling reproducible data exchange.
+
+Benefits:
+
+Cross-language interoperability (Python ↔ Julia)
+
+Full reproducibility and version control (compatible with DVC)
+
+Clean separation of pipeline stages
+
+Avoids kernel conflicts
+
+3. How to Use Temporary Files
+Recommended File Types
+
+CSV – simple tabular data
+
+NetCDF – climate/geospatial datasets
+
+HDF5 / Parquet – large or hierarchical datasets
+
+Examples
+
+Python → CSV → Julia
+
+# Python
+import pandas as pd
+
+df = pd.DataFrame({"time": ["2024-01-01","2024-01-02"], "temp": [5.2,6.1]})
+df.to_csv("data/temp/temp_data.csv", index=False)
+
+# Julia
+using CSV, DataFrames
+df = CSV.read("data/temp/temp_data.csv", DataFrame)
+
+
+Python → NetCDF → Julia
+
+# Python
+import xarray as xr
+ds = xr.open_dataset("data/raw/hourly.nc")
+monthly = ds.resample(time="1M").mean()
+monthly.to_netcdf("data/temp/monthly.nc")
+
+# Julia
+using NCDatasets
+ds = NCDataset("data/temp/monthly.nc")
+temp = ds["temp"][:]
+close(ds)
+
+4. Integration in a DVC + Quarto Pipeline
+data/raw/          # Original NetCDF (DVC tracked)
+    ↓
+Python scripts     # download.py / aggregate.py
+    ↓
+data/temp/         # Temporary files (CSV / NetCDF)
+    ↓
+Julia scripts      # make_masks.jl
+    ↓
+data/processed/    # Final outputs (DVC tracked)
+    ↓
+Quarto reports     # analysis/*.qmd
+
+
+Temporary files are a bridge; they never replace the final processed/ data.
+
+5. Key Rules
+Rule	         Recommendation
+Shared memory	 ❌ Never rely on it between Python & Julia
+Temporary files	 ✅ CSV / NetCDF / HDF5
+Git	             ❌ Ignore data/temp/* in .gitignore
+DVC	             Optional if file is needed for reproducibility
+Workflow	     Python → Temp → Julia → Processed → Quarto
+
+Diagram :
+          ┌────────────┐
+          │ data/raw/  │
+          │  (NetCDF)  │
+          └─────┬──────┘
+                │
+                ▼
+        ┌───────────────┐
+        │ Python Script │
+        │ download.py / │
+        │ aggregate.py  │
+        └─────┬─────────┘
+              │
+              ▼
+       ┌──────────────┐
+       │ data/temp/   │
+       │ (CSV/NetCDF) │
+       └─────┬────────┘
+             │
+             ▼
+        ┌──────────────┐
+        │ Julia Script │
+        │ make_masks.jl│
+        └─────┬────────┘
+              │
+              ▼
+       ┌──────────────┐
+       │ data/processed│
+       │  (NetCDF/CSV) │
+       └─────┬────────┘
+              │
+              ▼
+       ┌──────────────┐
+       │ Quarto Reports│
+       │ analysis/*.qmd│
+       └──────────────┘
