@@ -1,0 +1,46 @@
+---
+title: "Analyse de la température 2m – Données ERA5"
+author: "Hajmi Hanaa"
+date: "2025-12-01"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+    code-fold: true
+execute:
+  echo: true
+  warning: false
+  message: false
+jupyter: julia-1.11
+---
+
+#Chargement des données NetCDF
+```{julia}
+using NCDatasets
+using Plots
+
+# ouvrir fichier Netcdf
+ds = NCDataset("test_era5_t2m_20250101_0000.nc")
+
+# t2m = vecteur 1D de 2666 valeurs
+t2m = ds["t2m"][:]
+lat = ds["latitude"][:]
+lon = ds["longitude"][:]
+# remettre en matrice : 62 longitudes × 43 latitudes
+t2mr = reshape(t2m, 62, 43)
+#62 colonnes et 43 lignes lon sont croissant mais lat sont decroissant du nord au sud
+t2mtranspose = t2mr'   #car le heatmap veut une #matrice[latitude,longitude]
+
+
+lat_croissant = reverse(lat)  
+#ordre croissant
+t2m_final = t2mtranspose[end:-1:1,:] #apres la transpose lat est décroissante 
+#tracer la carte avec la fonction heatmap#
+heatmap(lon,lat_croissant,t2m_final, xlabel = "Longitude",
+    ylabel = "Latitude",
+    title = "Température 2m (K)",colorbar_title = "K")
+#sauvegarde limage
+savefig("cartet2m.png")
+close(ds)
+```
