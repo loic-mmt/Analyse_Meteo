@@ -2,7 +2,8 @@ git add .
 git commit -m "modif plot_temp"
 git push origin main
 
-dvc add data/raw/era5_temp_1950.nc
+#Pour enregistrer, puis faire un git push classique
+dvc add data
 dvc push
 
 
