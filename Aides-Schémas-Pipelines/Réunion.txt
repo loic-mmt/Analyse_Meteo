@@ -1,3 +1,21 @@
+1ere REUNION
+
+construire courbe anomalie de température pour la France métropole ou une région, ville, département : granularité
+- donnée horaire de la température standard mesuré a 2m.
+- comment on obtient la courbe : 2 façons : station météo pas suffisamment précise, donnée de reanalyse!!!!!--> récupérer des donnée a 31km carré a un pas horaire
+- Modèle climatologique
+Comment on récupère les données : ca fait partie du projet (copernicus) ????
+Requête API pour récupérer une partie des données. Chaque heure une carte...
+1) collecte des donnees (données spatiale), modéliser la carte de la France, car 1 pixel peut dépasser de la france. Copernicus ou autre
+Lecture fichier
+Visualisation
+2) obtenir moyenne spatiale
+3) construire une courbe d'anomalies des température a l'échelle de la france
+
+Rapport : sujet, contexte, problématique, ... (15-20 pages)
+2 soutenances : décembre, fin avril
+
+
 REUNION DU 10 NOVEMBRE
 
 interroger API en automatique
