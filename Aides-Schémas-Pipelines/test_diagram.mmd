@@ -1,0 +1,14 @@
+flowchart TB
+    A("import fichiers API")
+    B("rassemblement heure -> année")
+    C("Création des masques pour regions/departements")
+    D("Création .nc de moyenne par mois/année")
+    E("Dashboard_interactif")
+    D-- stockage processed --> E
+    subgraph PYTHON
+        A-->B-- stockage raw --> D
+    end
+    subgraph JULIA
+        C
+    end
+    C -- stockage masks --> E
