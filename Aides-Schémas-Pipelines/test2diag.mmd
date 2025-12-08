@@ -1,4 +1,10 @@
 flowchart TB
+
+    classDef pyNode fill:#bbdefb,stroke:#1565c0,stroke-width:2px,color:black;
+    classDef jlNode fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:black;
+    classDef qNode fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:black;
+
+
     A("import fichiers API")
     B("rassemblement heure -> année")
     C("Création des masques pour regions/departements")
@@ -6,28 +12,42 @@ flowchart TB
     E("Rapport")
     F("Dashboard interactif")
     G("analysis")
+
     subgraph PYTHON
         subgraph download.ipynb
-        A-->B
+            A-->B
         end
         subgraph aggregate.ipynb
             D
         end
         B-- stockage_raw --> D
     end
+
     subgraph JULIA
         subgraph make_masks.jl
             C
         end
     end
+
     subgraph QUARTO
         G --> E & F
-        subgraph PYTHON/SHINY
+        subgraph PYTHON_SHINY ["PYTHON/SHINY"]
             F
         end
         subgraph Mixed_languages
             E
         end
     end
+
     D-- stockage_processed --> G
     C -- stockage_masks --> G
+
+
+    class A,B,D pyNode
+    class C jlNode
+    class E,F,G qNode
+
+
+    style PYTHON fill:#e3f2fd,stroke:#1565c0,stroke-dasharray: 5 5
+    style JULIA fill:#f3e5f5,stroke:#6a1b9a,stroke-dasharray: 5 5
+    style QUARTO fill:#e8f5e9,stroke:#2e7d32,stroke-dasharray: 5 5
