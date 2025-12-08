@@ -1,0 +1,40 @@
+REUNION DU 10 NOVEMBRE
+
+interroger API en automatique
+API perso
+est-ce qu’il y’a un cooldown → 1 heure, 1 journée
+comment on manipule le fichier quand y’a plusieurs heures,...?
+importation + manipulation fichier nc
+nbr requete API ?
+comment stacker + stockage + format et comment le stocker
+10 Go au total : 15 Mo * 6* 75
+visualisation : matrice données + travail stat spaciale
+trouver contour france sans corse (json, shp) avec image
+une fois le contour, dégagez les données sur l'extérieur de la france (NA), que les données des température de la france
+Calculez moyenne
+
+Automatisation API
+Import + manipulation nc (tester)
+comment agréger fichier si plusieurs fichier
+image
+trouver les contours avec format facile (json, shp),
+moyenne horaire
+
+OBJECTIFS :
+capable de le faire pour departement, region, ville
+
+
+REUNION DU 8 DECEMBRE
+
+interface copernicus → y passer du temps, les détails, les complications pour la présentations
+étapes (schéma) pour expliquer les démarche de l’API
+structure de code (map, matrice,...)
+contours de la France avec commune, départements, région... sans température
+voir si on recalcule à chaque fois, si on recalcule chaque pixels ou si on applique le calque
+s'assurer que le calcul de poids est soit 0 ou 1, + calcul de fractions pour le contour/ frontières
+utilisé le même masque → À AUTOMATISER
+dvc
+etape python → julia : automatisation API, fichiers NC, visualisation carte avec masque + construction série temporelle sur la france → INTERFACE INTERACTIVE
+spliter en différente partie pour que chacun participe
+ 20 Min + questions
+
