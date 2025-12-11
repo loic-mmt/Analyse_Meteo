@@ -1,1 +1,5 @@
 /data
+visualisation/data/
+data/
+*.shp
+*.7z
