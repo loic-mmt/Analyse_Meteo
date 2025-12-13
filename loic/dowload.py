@@ -19,7 +19,7 @@ GRID = [0.25, 0.25]
 
 # 3) Période à télécharger (1950-2024 inclus)
 START_YEAR = 1950
-END_YEAR = 2024
+END_YEAR = 1960
 YEARS = list(range(START_YEAR, END_YEAR + 1))
 MONTHS = list(range(1, 13))
 DAYS = [f"{d:02d}" for d in range(1, 32)]  # CDS gère les jours inexistants selon le mois

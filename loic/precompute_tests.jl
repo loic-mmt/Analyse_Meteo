@@ -5,6 +5,77 @@ using Statistics
 using Base.Threads
 
 
+# Build a Proj transformation from EPSG:4326 (lon/lat) to the shapefile CRS.
+# This avoids relying on ArchGDAL's coordinate-transformation constructor, which changes across versions.
+function proj_to_layer_crs(srs)
+    crs_wkt = try
+        ArchGDAL.toWKT(srs)
+    catch
+        ""
+    end
+    crs_str = !isempty(strip(crs_wkt)) ? crs_wkt : (try
+        ArchGDAL.toPROJ4(srs)
+    catch
+        ""
+    end)
+
+    isempty(strip(crs_str)) && error("Layer CRS could not be exported to WKT/PROJ4. Is the .prj missing?")
+    return Proj.Transformation("EPSG:4326", crs_str, always_xy=true)
+end
+
+# Iterate over all features of an OGR layer and return cloned geometries.
+# ArchGDAL's feature-iteration API differs across versions, so we try multiple approaches.
+function layer_feature_geoms(layer)
+    geoms = ArchGDAL.IGeometry[]
+
+    # 1) Newer ArchGDAL: ArchGDAL.eachfeature(layer) do feat ... end
+    if isdefined(ArchGDAL, :eachfeature)
+        eachf = getfield(ArchGDAL, :eachfeature)
+        eachf(layer) do feat
+            g = ArchGDAL.getgeom(feat)
+            push!(geoms, ArchGDAL.clone(g))
+        end
+        return geoms
+    end
+
+    # 2) Some versions support iterating directly over the layer
+    try
+        for feat in layer
+            g = ArchGDAL.getgeom(feat)
+            push!(geoms, ArchGDAL.clone(g))
+        end
+        return geoms
+    catch
+        # fall through
+    end
+
+    # 3) Fallback: loop by feature index
+    n = if isdefined(ArchGDAL, :nfeature)
+        getfield(ArchGDAL, :nfeature)(layer)
+    elseif isdefined(ArchGDAL, :getfeaturecount)
+        getfield(ArchGDAL, :getfeaturecount)(layer)
+    elseif isdefined(ArchGDAL, :featurecount)
+        getfield(ArchGDAL, :featurecount)(layer)
+    else
+        error("Cannot count features on this ArchGDAL version (no eachfeature/iterator/featurecount).")
+    end
+
+    getfeat = if isdefined(ArchGDAL, :getfeature)
+        getfield(ArchGDAL, :getfeature)
+    elseif isdefined(ArchGDAL, :feature)
+        getfield(ArchGDAL, :feature)
+    else
+        error("Cannot read features by index on this ArchGDAL version (no getfeature/feature).")
+    end
+
+    for idx in 0:(n - 1)
+        feat = getfeat(layer, idx)
+        g = ArchGDAL.getgeom(feat)
+        push!(geoms, ArchGDAL.clone(g))
+    end
+
+    return geoms
+end
 
 
 function compute_bounds(coords::AbstractVector{<:Real})
@@ -75,25 +146,24 @@ close(ds)
 # ======== Lecture du shapefile et union + reprojection WGS84 ======== 
 # ====================================================================
 
-fr_geom_ll = ArchGDAL.read(shp) do dataset
+fr_geom_src, pj_ll_to_src = ArchGDAL.read(shp) do dataset
     layer = ArchGDAL.getlayer(dataset, 0) # Prend la couche 0 (première couche du shapefile)
-    srs_src = ArchGDAL.getspatialref(layer) # Récupère le système de coordonnées source du shapefile.
-    srs_ll = ArchGDAL.importEPSG(4326) # Crée un SRS WGS84 (EPSG:4326) = lat/lon.
-    tr = ArchGDAL.CoordTransform(srs_src, srs_ll) # reprojection
 
-    geoms = ArchGDAL.IGeometry[]
-    ArchGDAL.eachfeature(layer) do feat # Boucle sur chaque région
-        g = ArchGDAL.getgeom(feat) # récupère le polygone
-        g2 = ArchGDAL.clone(g)
-        ArchGDAL.transform!(g2, tr) # reprojette en WGS84
-        push!(geoms, g2) # ajoute au tableau
-    end
+    # CRS du shapefile
+    srs_src = ArchGDAL.getspatialref(layer)
 
-    u = geoms[1] # -> fusionne toutes les régions en un seul polygone union
+    # Transformation (lon/lat EPSG:4326) -> CRS shapefile
+    pj = proj_to_layer_crs(srs_src)
+
+    geoms = layer_feature_geoms(layer)
+
+    # Fusionne toutes les régions en un seul polygone union
+    u = geoms[1]
     for k in 2:length(geoms)
         u = ArchGDAL.union(u, geoms[k])
     end
-    u
+
+    return (u, pj)
 end
 
 
@@ -103,11 +173,11 @@ end
 k = 8       # 8x8 points par pixel (64 tests)-> 10 ou 12 pour précision
 weights_frac = zeros(Float64, nlat, nlon) # matrice (nlat × nlon) initialisée à 0
 
-"""
-@threads sert à paralléliser une boucle for : 
-au lieu que le programme calcule i=1,2,3,... sur un seul cœur CPU, 
+#=
+@threads sert à paralléliser une boucle for :
+au lieu que le programme calcule i=1,2,3,... sur un seul cœur CPU,
 Julia va répartir les itérations de la boucle sur plusieurs threads pour aller plus vite.
-"""
+=#
 @threads for i in 1:nlat
     for j in 1:nlon
         # Récupère les bornes du pixel (i,j).
@@ -122,13 +192,12 @@ Julia va répartir les itérations de la boucle sur plusieurs threads pour aller
             x = lon0 + (a - 0.5) * (lon1 - lon0) / k # place le point au centre de chaque sous-cellule
             for b in 1:k
                 y =  lat0 + (b - 0.5) * (lat1 - lat0) / k
-                pt = ArchGDAL.createpoint(x, y) # Crée un point géométrique
-                inside += ArchGDAL.contains(fr_geom_ll, pt) ? 1 : 0
-                """
-                Teste si le point est dans la géométrie France,
-                condition ? 1 : 0 -> opérateur ternaire.
-	            Ajoute 1 si dedans, sinon 0
-                """
+                X, Y = pj_ll_to_src(x, y)
+                pt = ArchGDAL.createpoint(X, Y) # point dans le CRS du shapefile
+                inside += ArchGDAL.contains(fr_geom_src, pt) ? 1 : 0
+                # Teste si le point est dans la géométrie France,
+                # condition ? 1 : 0 -> opérateur ternaire.
+                # Ajoute 1 si dedans, sinon 0.
             end
         end
 

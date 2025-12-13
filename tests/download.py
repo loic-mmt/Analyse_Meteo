@@ -11,10 +11,10 @@ c = cdsapi.Client()
 area_fr = [51.5, -5.5, 41.0, 9.8]
 
 # Paramètres de date
-year = "2025"
+years = "2025"
 
 # 3) Liste des mois à télécharger (ici: janvier et février)
-months = ["01", "02"]
+months = [f"{m:02d}" for d in range(1, 12)]
 
 # 4) Liste des jours (01 à 31) – CDS gère les jours inexistants selon le mois
 days = [f"{d:02d}" for d in range(1, 32)]
@@ -33,7 +33,7 @@ c.retrieve(
     {
         "product_type": "reanalysis",
         "variable": ["2m_temperature"],
-        "year": year,
+        "year": years,
         "month": months,
         "day": days,
         "time": times,
