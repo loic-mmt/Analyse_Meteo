@@ -134,7 +134,9 @@ if any(isnan, lats) || any(isnan, lons)
 end
 
 nlat = length(lats)
+println("Grid size: nlat=", nlat, " nlon=", length(lons), " -> pixels=", nlat*length(lons))
 nlon = length(lons)
+println("Threads: ", Threads.nthreads())
 
 # Calcule les bornes lat/lon.
 lat_bnds = compute_bounds(lats)
@@ -166,6 +168,7 @@ fr_geom_src, pj_ll_to_src = ArchGDAL.read(shp) do dataset
     return (u, pj)
 end
 
+println("Shapefile loaded and unioned. Starting weight computation...")
 
 # ======== fractions par pixel (subsampling) ===========
 # ======================================================
@@ -178,6 +181,11 @@ weights_frac = zeros(Float64, nlat, nlon) # matrice (nlat × nlon) initialisée 
 au lieu que le programme calcule i=1,2,3,... sur un seul cœur CPU,
 Julia va répartir les itérations de la boucle sur plusieurs threads pour aller plus vite.
 =#
+
+# Progress tracking (thread-safe)
+rows_done = Threads.Atomic{Int}(0)
+step = max(1, Int(floor(0.05 * nlat)))  # print every ~5% of rows
+
 @threads for i in 1:nlat
     for j in 1:nlon
         # Récupère les bornes du pixel (i,j).
@@ -203,8 +211,15 @@ Julia va répartir les itérations de la boucle sur plusieurs threads pour aller
 
         weights_frac[i, j] = inside / total # Fraction du pixel couverte par la France
     end
+    # update progress counter once per completed latitude row
+    done = Threads.atomic_add!(rows_done, 1) + 1
+    if done % step == 0 || done == nlat
+        pct = round(100 * done / nlat; digits=1)
+        println("Progress: ", done, "/", nlat, " rows (", pct, "%)")
+    end
 end
 
+println("Weights computed. Saving to NetCDF...")
 
 # ======== Poids finaux : fraction × cos(lat) =========
 # =====================================================
@@ -248,3 +263,11 @@ wds.attrib["subsample_k"] = string(k)
 close(wds)
 
 println("Saved: $out_weights_nc")
+
+"""
+Resultats : 
+
+weights_frac min/max/mean = 0.0 / 1.0 / 0.3868447580645161
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2658164279327024
+
+"""
