@@ -170,6 +170,13 @@ end
 
 println("Shapefile loaded and unioned. Starting weight computation...")
 
+# Fast point-in-polygon test (lon/lat -> CRS shapefile -> contains)
+@inline function inside_france_ll(fr_geom_src, pj_ll_to_src, lon::Float64, lat::Float64)::Bool
+    X, Y = pj_ll_to_src(lon, lat)
+    pt = ArchGDAL.createpoint(X, Y)
+    return ArchGDAL.contains(fr_geom_src, pt)
+end
+
 # ======== fractions par pixel (subsampling) ===========
 # ======================================================
 
@@ -187,30 +194,70 @@ rows_done = Threads.Atomic{Int}(0)
 step = max(1, Int(floor(0.05 * nlat)))  # print every ~5% of rows
 
 @threads for i in 1:nlat
+
+    # Per-row counters (avoid atomics in the hot inner loop)
+    full0_row = 0
+    full1_row = 0
+    boundary_row = 0
+
     for j in 1:nlon
-        # Récupère les bornes du pixel (i,j).
+        # Bornes du pixel (i,j)
         lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
         lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
 
-        inside = 0
-        total = k*k # nombre de points à l’intérieur
+        lonm = 0.5 * (lon0 + lon1)
+        latm = 0.5 * (lat0 + lat1)
 
-        # grille régulière de points dans le pixel
+        # 9 tests rapides (4 coins + 4 milieux d'arêtes + centre)
+        any_in = false
+        all_in = true
+
+        # corners
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lon0, lat0); any_in |= v; all_in &= v
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lon1, lat0); any_in |= v; all_in &= v
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lon1, lat1); any_in |= v; all_in &= v
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lon0, lat1); any_in |= v; all_in &= v
+
+        # edge midpoints
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lonm, lat0); any_in |= v; all_in &= v
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lonm, lat1); any_in |= v; all_in &= v
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lon0, latm); any_in |= v; all_in &= v
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lon1, latm); any_in |= v; all_in &= v
+
+        # center
+        v = inside_france_ll(fr_geom_src, pj_ll_to_src, lonm, latm); any_in |= v; all_in &= v
+
+        if all_in
+            # Pixel entièrement en France (très probable)
+            weights_frac[i, j] = 1.0
+            full1_row += 1
+            continue
+        elseif !any_in
+            # Pixel entièrement hors France (très probable)
+            weights_frac[i, j] = 0.0
+            full0_row += 1
+            continue
+        end
+
+        # Sinon: pixel de frontière -> subsampling k×k (inchangé)
+        boundary_row += 1
+        inside = 0
+        total = k * k
+
         for a in 1:k
-            x = lon0 + (a - 0.5) * (lon1 - lon0) / k # place le point au centre de chaque sous-cellule
+            x = lon0 + (a - 0.5) * (lon1 - lon0) / k
             for b in 1:k
-                y =  lat0 + (b - 0.5) * (lat1 - lat0) / k
-                X, Y = pj_ll_to_src(x, y)
-                pt = ArchGDAL.createpoint(X, Y) # point dans le CRS du shapefile
-                inside += ArchGDAL.contains(fr_geom_src, pt) ? 1 : 0
-                # Teste si le point est dans la géométrie France,
-                # condition ? 1 : 0 -> opérateur ternaire.
-                # Ajoute 1 si dedans, sinon 0.
+                y = lat0 + (b - 0.5) * (lat1 - lat0) / k
+                inside += inside_france_ll(fr_geom_src, pj_ll_to_src, x, y) ? 1 : 0
             end
         end
 
-        weights_frac[i, j] = inside / total # Fraction du pixel couverte par la France
+        weights_frac[i, j] = inside / total
     end
+
+    # Optional per-row debug (comment out if too noisy)
+    # println("Row ", i, ": full1=", full1_row, " full0=", full0_row, " boundary=", boundary_row)
+
     # update progress counter once per completed latitude row
     done = Threads.atomic_add!(rows_done, 1) + 1
     if done % step == 0 || done == nlat
@@ -265,9 +312,13 @@ close(wds)
 println("Saved: $out_weights_nc")
 
 """
-Resultats : 
+Resultats > 25 min : 
 
 weights_frac min/max/mean = 0.0 / 1.0 / 0.3868447580645161
 final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2658164279327024
+
+Résultats Optimisés < 5.40 min : 
+weights_frac min/max/mean = 0.0 / 1.0 / 0.38687406226556637
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.26583931197628924
 
 """

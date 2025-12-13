@@ -170,54 +170,101 @@ end
 
 println("Shapefile loaded and unioned. Starting weight computation...")
 
+# Fast point-in-polygon test (lon/lat -> CRS shapefile -> contains)
+@inline function inside_france_ll(fr_geom_src, pj_ll_to_src, lon::Float64, lat::Float64)::Bool
+    X, Y = pj_ll_to_src(lon, lat)
+    pt = ArchGDAL.createpoint(X, Y)
+    return ArchGDAL.contains(fr_geom_src, pt)
+end
+
 # ======== fractions par pixel (subsampling) ===========
 # ======================================================
 
 k = 8       # 8x8 points par pixel (64 tests)-> 10 ou 12 pour précision
 weights_frac = zeros(Float64, nlat, nlon) # matrice (nlat × nlon) initialisée à 0
 
-#=
-@threads sert à paralléliser une boucle for :
-au lieu que le programme calcule i=1,2,3,... sur un seul cœur CPU,
-Julia va répartir les itérations de la boucle sur plusieurs threads pour aller plus vite.
-=#
+# -------------------------------
+# Pass 1: center mask (cheap)
+# -------------------------------
+center_in = falses(nlat, nlon)
 
-# Progress tracking (thread-safe)
+println("Pass 1/2: computing center mask (1 contains per pixel)...")
 rows_done = Threads.Atomic{Int}(0)
-step = max(1, Int(floor(0.05 * nlat)))  # print every ~5% of rows
+step = max(1, Int(floor(0.05 * nlat)))
 
 @threads for i in 1:nlat
     for j in 1:nlon
-        # Récupère les bornes du pixel (i,j).
+        lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
+        lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
+        lonm = 0.5 * (lon0 + lon1)
+        latm = 0.5 * (lat0 + lat1)
+        center_in[i, j] = inside_france_ll(fr_geom_src, pj_ll_to_src, lonm, latm)
+    end
+
+    done = Threads.atomic_add!(rows_done, 1) + 1
+    if done % step == 0 || done == nlat
+        pct = round(100 * done / nlat; digits=1)
+        println("Pass 1 progress: ", done, "/", nlat, " rows (", pct, "%)")
+    end
+end
+
+# -------------------------------
+# Pass 2: boundary detection + weights
+# -------------------------------
+println("Pass 2/2: detecting boundary pixels and computing weights...")
+
+# Identify boundary pixels: a pixel is boundary if any 4-neighbor differs in center_in.
+boundary = falses(nlat, nlon)
+
+@threads for i in 1:nlat
+    for j in 1:nlon
+        v = center_in[i, j]
+        b = false
+        if i > 1      && center_in[i-1, j] != v; b = true; end
+        if i < nlat   && center_in[i+1, j] != v; b = true; end
+        if j > 1      && center_in[i, j-1] != v; b = true; end
+        if j < nlon   && center_in[i, j+1] != v; b = true; end
+        boundary[i, j] = b
+    end
+end
+
+# Fill weights: interior pixels -> 0/1 directly, boundary -> expensive k×k
+weights_frac .= 0.0
+
+rows_done2 = Threads.Atomic{Int}(0)
+@threads for i in 1:nlat
+    for j in 1:nlon
+        if !boundary[i, j]
+            weights_frac[i, j] = center_in[i, j] ? 1.0 : 0.0
+            continue
+        end
+
+        # Boundary pixel -> k×k subsampling (unchanged)
         lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
         lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
 
         inside = 0
-        total = k*k # nombre de points à l’intérieur
-
-        # grille régulière de points dans le pixel
+        total = k * k
         for a in 1:k
-            x = lon0 + (a - 0.5) * (lon1 - lon0) / k # place le point au centre de chaque sous-cellule
+            x = lon0 + (a - 0.5) * (lon1 - lon0) / k
             for b in 1:k
-                y =  lat0 + (b - 0.5) * (lat1 - lat0) / k
-                X, Y = pj_ll_to_src(x, y)
-                pt = ArchGDAL.createpoint(X, Y) # point dans le CRS du shapefile
-                inside += ArchGDAL.contains(fr_geom_src, pt) ? 1 : 0
-                # Teste si le point est dans la géométrie France,
-                # condition ? 1 : 0 -> opérateur ternaire.
-                # Ajoute 1 si dedans, sinon 0.
+                y = lat0 + (b - 0.5) * (lat1 - lat0) / k
+                inside += inside_france_ll(fr_geom_src, pj_ll_to_src, x, y) ? 1 : 0
             end
         end
-
-        weights_frac[i, j] = inside / total # Fraction du pixel couverte par la France
+        weights_frac[i, j] = inside / total
     end
-    # update progress counter once per completed latitude row
-    done = Threads.atomic_add!(rows_done, 1) + 1
+
+    done = Threads.atomic_add!(rows_done2, 1) + 1
     if done % step == 0 || done == nlat
         pct = round(100 * done / nlat; digits=1)
-        println("Progress: ", done, "/", nlat, " rows (", pct, "%)")
+        println("Pass 2 progress: ", done, "/", nlat, " rows (", pct, "%)")
     end
 end
+
+# Some quick stats for sanity
+nb_boundary = count(boundary)
+println("Boundary pixels: ", nb_boundary, " / ", nlat*nlon, " (", round(100*nb_boundary/(nlat*nlon); digits=2), "%)")
 
 println("Weights computed. Saving to NetCDF...")
 
@@ -265,9 +312,17 @@ close(wds)
 println("Saved: $out_weights_nc")
 
 """
-Resultats (k = 8): 
+Resultats > 25 min : 
 
 weights_frac min/max/mean = 0.0 / 1.0 / 0.3868447580645161
 final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2658164279327024
+
+Résultats Optimisés < 5.40 min : 
+weights_frac min/max/mean = 0.0 / 1.0 / 0.38687406226556637
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.26583931197628924
+
+Résultats Optimisés v2 < 4.11 min :
+weights_frac min/max/mean = 0.0 / 1.0 / 0.3866279069767442
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2656593883012403
 
 """

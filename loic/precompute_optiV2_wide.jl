@@ -4,7 +4,6 @@ using NCDatasets
 using Statistics
 using Base.Threads
 
-
 # Build a Proj transformation from EPSG:4326 (lon/lat) to the shapefile CRS.
 # This avoids relying on ArchGDAL's coordinate-transformation constructor, which changes across versions.
 function proj_to_layer_crs(srs)
@@ -77,52 +76,41 @@ function layer_feature_geoms(layer)
     return geoms
 end
 
-
 function compute_bounds(coords::AbstractVector{<:Real})
     N = length(coords)
     N < 2 && error("Need >= 2 coords")
-    mids = 0.5 .*(coords[1:end-1] .+ coords[2:end]) #  calcule les milieux entre chaque paire de coordonnées successives
-    # coords[1:end-1] = tous sauf le dernier
-    # coords[2:end] = tous sauf le premier
-    b = Vector{Float64}(undef, N + 1) # N centres de pixels -> N+1 frontières.
+    mids = 0.5 .* (coords[1:end-1] .+ coords[2:end])
+    b = Vector{Float64}(undef, N + 1)
     b[2:end-1] .= mids
-    b[1] = coords[1] + (coords[1] - mids[1]) # premier bord
-    b[end] = coords[end] + (coords[end] - mids[end]) # dernier bord
+    b[1] = coords[1] + (coords[1] - mids[1])
+    b[end] = coords[end] + (coords[end] - mids[end])
     return b
-    
 end
 
-# ======== Inputs ========= 
-# =========================
+# ======== Inputs =========
 
 sample_nc = "../tests/era5_t2m_2025_01-02_fr.nc"     # un seul fichier pour la grille
-shp = "../data/shapefiles/region.shp" 
+shp = "../data/shapefiles/region.shp"
 out_weights_nc = "weights_france_final.nc"
 
-
 # ======== grille NetCDF =========
-# ================================
 
 ds = NCDataset(sample_nc)
 
-"""
-Cherche le premier nom de variable présent dans 
-le dataset parmi plusieurs possibilités -> pour la reproductibilité 
-dans le cas ou les noms viendraient à changer.
-"""
+# Cherche le premier nom de variable présent dans le dataset parmi plusieurs possibilités.
 function find_coords(ds, keys)
     for k in keys
-        if haskey(ds, k); return k; end
+        if haskey(ds, k)
+            return k
+        end
     end
     error("coord not found among $(keys)")
 end
 
-lat_name = find_coords(ds, ["latitude","lat","Latitude","LAT"])
-lon_name = find_coords(ds, ["longitude","lon","Longitude","LON"])
+lat_name = find_coords(ds, ["latitude", "lat", "Latitude", "LAT"])
+lon_name = find_coords(ds, ["longitude", "lon", "Longitude", "LON"])
 
-# Lit toutes les valeurs de la variable latitude / longitude.
-# NCDatasets peut retourner un Vector{Union{Missing,Float64}} (même si aucun missing n'est présent).
-# -> On force ici des vecteurs Float64
+# Force vectors Float64 (avoid Vector{Union{Missing,Float64}})
 lats_raw = ds[lat_name][:]
 lons_raw = ds[lon_name][:]
 
@@ -134,22 +122,19 @@ if any(isnan, lats) || any(isnan, lons)
 end
 
 nlat = length(lats)
-println("Grid size: nlat=", nlat, " nlon=", length(lons), " -> pixels=", nlat*length(lons))
 nlon = length(lons)
+println("Grid size: nlat=", nlat, " nlon=", nlon, " -> pixels=", nlat * nlon)
 println("Threads: ", Threads.nthreads())
 
-# Calcule les bornes lat/lon.
 lat_bnds = compute_bounds(lats)
 lon_bnds = compute_bounds(lons)
 
 close(ds)
 
-
-# ======== Lecture du shapefile et union + reprojection WGS84 ======== 
-# ====================================================================
+# ======== Lecture du shapefile (union) + proj lon/lat->CRS shapefile ========
 
 fr_geom_src, pj_ll_to_src = ArchGDAL.read(shp) do dataset
-    layer = ArchGDAL.getlayer(dataset, 0) # Prend la couche 0 (première couche du shapefile)
+    layer = ArchGDAL.getlayer(dataset, 0)
 
     # CRS du shapefile
     srs_src = ArchGDAL.getspatialref(layer)
@@ -170,76 +155,128 @@ end
 
 println("Shapefile loaded and unioned. Starting weight computation...")
 
-# ======== fractions par pixel (subsampling) ===========
-# ======================================================
+# Fast point-in-polygon test (lon/lat -> CRS shapefile -> contains)
+@inline function inside_france_ll(fr_geom_src, pj_ll_to_src, lon::Float64, lat::Float64)::Bool
+    X, Y = pj_ll_to_src(lon, lat)
+    pt = ArchGDAL.createpoint(X, Y)
+    return ArchGDAL.contains(fr_geom_src, pt)
+end
 
-k = 8       # 8x8 points par pixel (64 tests)-> 10 ou 12 pour précision
-weights_frac = zeros(Float64, nlat, nlon) # matrice (nlat × nlon) initialisée à 0
+# ======== fractions par pixel (subsampling) =========
 
-#=
-@threads sert à paralléliser une boucle for :
-au lieu que le programme calcule i=1,2,3,... sur un seul cœur CPU,
-Julia va répartir les itérations de la boucle sur plusieurs threads pour aller plus vite.
-=#
+k = 8
+weights_frac = zeros(Float64, nlat, nlon)
 
-# Progress tracking (thread-safe)
+# -------------------------------
+# Pass 1: center mask (cheap)
+# -------------------------------
+center_in = falses(nlat, nlon)
+
+println("Pass 1/2: computing center mask (1 contains per pixel)...")
 rows_done = Threads.Atomic{Int}(0)
-step = max(1, Int(floor(0.05 * nlat)))  # print every ~5% of rows
+step = max(1, Int(floor(0.05 * nlat)))
 
 @threads for i in 1:nlat
     for j in 1:nlon
-        # Récupère les bornes du pixel (i,j).
+        lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
+        lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
+        lonm = 0.5 * (lon0 + lon1)
+        latm = 0.5 * (lat0 + lat1)
+        center_in[i, j] = inside_france_ll(fr_geom_src, pj_ll_to_src, lonm, latm)
+    end
+
+    done = Threads.atomic_add!(rows_done, 1) + 1
+    if done % step == 0 || done == nlat
+        pct = round(100 * done / nlat; digits=1)
+        println("Pass 1 progress: ", done, "/", nlat, " rows (", pct, "%)")
+    end
+end
+
+# -------------------------------
+# Pass 2: boundary detection + weights
+# -------------------------------
+println("Pass 2/2: detecting boundary pixels and computing weights...")
+
+# Identify boundary pixels: a pixel is boundary if any 4-neighbor differs in center_in.
+boundary = falses(nlat, nlon)
+
+@threads for i in 1:nlat
+    for j in 1:nlon
+        v = center_in[i, j]
+        b = false
+        if i > 1    && center_in[i-1, j] != v; b = true; end
+        if i < nlat && center_in[i+1, j] != v; b = true; end
+        if j > 1    && center_in[i, j-1] != v; b = true; end
+        if j < nlon && center_in[i, j+1] != v; b = true; end
+        boundary[i, j] = b
+    end
+end
+
+# ---- Requested patch: dilate boundary by 1 pixel (4-neighborhood) ----
+# This reduces misclassification of near-boundary pixels while keeping k unchanged.
+boundary_dil = copy(boundary)
+@threads for i in 1:nlat
+    for j in 1:nlon
+        if boundary[i, j]
+            boundary_dil[i, j] = true
+            if i > 1;    boundary_dil[i-1, j] = true; end
+            if i < nlat; boundary_dil[i+1, j] = true; end
+            if j > 1;    boundary_dil[i, j-1] = true; end
+            if j < nlon; boundary_dil[i, j+1] = true; end
+        end
+    end
+end
+boundary = boundary_dil
+
+# Fill weights: interior pixels -> 0/1 directly, boundary -> expensive k×k
+weights_frac .= 0.0
+
+rows_done2 = Threads.Atomic{Int}(0)
+@threads for i in 1:nlat
+    for j in 1:nlon
+        if !boundary[i, j]
+            weights_frac[i, j] = center_in[i, j] ? 1.0 : 0.0
+            continue
+        end
+
+        # Boundary pixel -> k×k subsampling (unchanged)
         lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
         lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
 
         inside = 0
-        total = k*k # nombre de points à l’intérieur
-
-        # grille régulière de points dans le pixel
+        total = k * k
         for a in 1:k
-            x = lon0 + (a - 0.5) * (lon1 - lon0) / k # place le point au centre de chaque sous-cellule
+            x = lon0 + (a - 0.5) * (lon1 - lon0) / k
             for b in 1:k
-                y =  lat0 + (b - 0.5) * (lat1 - lat0) / k
-                X, Y = pj_ll_to_src(x, y)
-                pt = ArchGDAL.createpoint(X, Y) # point dans le CRS du shapefile
-                inside += ArchGDAL.contains(fr_geom_src, pt) ? 1 : 0
-                # Teste si le point est dans la géométrie France,
-                # condition ? 1 : 0 -> opérateur ternaire.
-                # Ajoute 1 si dedans, sinon 0.
+                y = lat0 + (b - 0.5) * (lat1 - lat0) / k
+                inside += inside_france_ll(fr_geom_src, pj_ll_to_src, x, y) ? 1 : 0
             end
         end
-
-        weights_frac[i, j] = inside / total # Fraction du pixel couverte par la France
+        weights_frac[i, j] = inside / total
     end
-    # update progress counter once per completed latitude row
-    done = Threads.atomic_add!(rows_done, 1) + 1
+
+    done = Threads.atomic_add!(rows_done2, 1) + 1
     if done % step == 0 || done == nlat
         pct = round(100 * done / nlat; digits=1)
-        println("Progress: ", done, "/", nlat, " rows (", pct, "%)")
+        println("Pass 2 progress: ", done, "/", nlat, " rows (", pct, "%)")
     end
 end
+
+nb_boundary = count(boundary)
+println("Boundary pixels (dilated): ", nb_boundary, " / ", nlat*nlon, " (", round(100*nb_boundary/(nlat*nlon); digits=2), "%)")
 
 println("Weights computed. Saving to NetCDF...")
 
 # ======== Poids finaux : fraction × cos(lat) =========
-# =====================================================
-
-"""
-Convertit les latitudes en radians -> deg2rad.(lats) applique à chaque élément.
-    • Calcule cos pour chaque latitude
-    -> Parce qu’en lat/lon, la largeur réelle d’un degré de longitude diminue avec la latitude
-"""
-weights_lat = cos.(deg2rad.(lats)) # vecteur (nlat)
-final_weights = weights_frac .* reshape(weights_lat, nlat, 1) # transforme en colonne (nlat×1) pour pouvoir multiplier chaque ligne de weights_frac
+weights_lat = cos.(deg2rad.(lats))
+final_weights = weights_frac .* reshape(weights_lat, nlat, 1)
 
 println("weights_frac min/max/mean = ",
         minimum(weights_frac), " / ", maximum(weights_frac), " / ", mean(weights_frac))
 println("final_weights min/max/mean = ",
         minimum(final_weights), " / ", maximum(final_weights), " / ", mean(final_weights))
 
-
 # ============ Sauvegarde dans un NetCDF ==============
-# =====================================================
 
 isfile(out_weights_nc) && rm(out_weights_nc)
 
@@ -252,9 +289,9 @@ vlon = defVar(wds, lon_name, Float64, (lon_name,))
 v1   = defVar(wds, "weights_frac",  Float64, (lat_name, lon_name))
 v2   = defVar(wds, "final_weights", Float64, (lat_name, lon_name))
 
-vlat[:] = lats # -> Écrit les données dans les variables.
+vlat[:] = lats
 vlon[:] = lons
-v1[:, :] = weights_frac # [:, :] = toute la matrice.
+v1[:, :] = weights_frac
 v2[:, :] = final_weights
 
 wds.attrib["description"] = "France weights: fraction-in-France (subsample) and final_weights=fraction*cos(lat)"
@@ -265,8 +302,20 @@ close(wds)
 println("Saved: $out_weights_nc")
 
 """
-Resultats (k = 8): 
+Resultats > 25 min : 
 
+weights_frac min/max/mean = 0.0 / 1.0 / 0.3868447580645161
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2658164279327024
+
+Résultats Optimisés < 5.40 min : 
+weights_frac min/max/mean = 0.0 / 1.0 / 0.38687406226556637
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.26583931197628924
+
+Résultats Optimisés v2 < 4.11 min :
+weights_frac min/max/mean = 0.0 / 1.0 / 0.3866279069767442
+final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2656593883012403
+
+Résultats Optimisés v2 frontière dilatée < 7.12 min :
 weights_frac min/max/mean = 0.0 / 1.0 / 0.3868447580645161
 final_weights min/max/mean = 0.0 / 0.7460573750616996 / 0.2658164279327024
 
