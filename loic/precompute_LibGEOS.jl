@@ -222,7 +222,7 @@ function compute_bounds(coords::AbstractVector{<:Real})
     mids = 0.5 .* (coords[1:end-1] .+ coords[2:end]) # calcule les milieux entre chaque paire de coordonnées successives
     b = Vector{Float64}(undef, N + 1) # N centres de pixels -> N+1 frontières.
     b[2:end-1] .= mids
-    b[1] = coords[1] + (coords[1] - mids[1]) # premier bord
+    b[1] = coords[1] + (coords[1] - mids[1])         # premier bord
     b[end] = coords[end] + (coords[end] - mids[end]) # dernier bord
     return b
 end
@@ -302,16 +302,26 @@ end
 
 println("Shapefile loaded and unioned. Starting weight computation...")
 
-# Convert union geometry to GEOS once (then reuse in all threads)
-fr_wkt = ArchGDAL.toWKT(fr_geom_src)
+# ======== Conversion en GEOS + prepared geometry ========
+fr_wkt = ArchGDAL.toWKT(fr_geom_src) # WKT car GDAL géométrie != GEOS géométrie
 fr_geos = geos_from_wkt(fr_wkt)
-fr_geos_prepared = geos_prepare(fr_geos)
+fr_geos_prepared = geos_prepare(fr_geos) # rapidité
 println("LibGEOS geometry ready (prepared=", !(fr_geos_prepared === fr_geos), ")")
+# `===` teste l'identité (même objet en mémoire), pas juste l'égalité des valeurs.
+# Ici: si `fr_geos_prepared === fr_geos` alors la géométrie n'a pas pu être "préparée" (fallback), sinon elle l'a été.
+# Le `!` devant un Bool inverse vrai/faux.
 
-# Fast point-in-polygon test (lon/lat -> CRS shapefile -> contains)
+# Test d'appartenance d'un point à un polygone (longitude/latitude -> fichier de formes CRS -> contains)
 @inline function inside_france_ll(fr_geos_prepared, pj_ll_to_src, lon::Float64, lat::Float64)::Bool
-    X, Y = pj_ll_to_src(lon, lat)
+    # On part d'un point (lon, lat) en EPSG:4326 (WGS84).
+    # Le shapefile peut être dans un autre CRS, donc on reprojette d'abord.
+    X, Y = pj_ll_to_src(lon, lat)  # transforme (lon/lat) -> (X/Y) dans le CRS du shapefile
+
+    # On construit ensuite un point GEOS (plus rapide pour répéter contains).
+    # Float64(...) force le type (utile pour performance et compatibilité des constructeurs).
     pt = geos_point(Float64(X), Float64(Y))
+
+    # Test géométrique: vrai si le point est dans le polygone France.
     return geos_contains(fr_geos_prepared, pt)
 end
 
@@ -326,16 +336,19 @@ weights_frac = zeros(Float64, nlat, nlon)
 center_in = falses(nlat, nlon)
 
 println("Pass 1/2: computing center mask (1 contains per pixel)...")
+# Idée: faire un premier passage très peu coûteux (1 test par pixel au centre).
+# Ça donne une carte "dedans/dehors" (center_in) qu'on utilisera ensuite pour repérer uniquement les pixels proches de la frontière.
 rows_done = Threads.Atomic{Int}(0)
-step = max(1, Int(floor(0.05 * nlat)))
+step = max(1, Int(floor(0.05 * nlat))) # progrès : toutes les 5% de lignes
 
 @threads for i in 1:nlat
+    # `@threads` parallélise la boucle sur i : plusieurs lignes (latitudes) sont traitées en même temps.
     for j in 1:nlon
-        lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
+        lon0, lon1 = lon_bnds[j], lon_bnds[j+1] # récupère les bornes
         lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
-        lonm = 0.5 * (lon0 + lon1)
+        lonm = 0.5 * (lon0 + lon1) # calcule le centre (lonm, latm)
         latm = 0.5 * (lat0 + lat1)
-        center_in[i, j] = inside_france_ll(fr_geos_prepared, pj_ll_to_src, lonm, latm)
+        center_in[i, j] = inside_france_ll(fr_geos_prepared, pj_ll_to_src, lonm, latm) # Test au centre.
     end
 
     done = Threads.atomic_add!(rows_done, 1) + 1
@@ -353,22 +366,28 @@ println("Pass 2/2: detecting boundary pixels and computing weights...")
 # Identifier les pixels de bordure : un pixel est une bordure si l’un de ses 4 voisins diffère en center_in.
 boundary = falses(nlat, nlon)
 
-@threads for i in 1:nlat # utilisaion multi-coeur pour maximiser la vitesse d'execution
+@threads for i in 1:nlat
     for j in 1:nlon
-        v = center_in[i, j]
-        b = false
+        v = center_in[i, j]  # statut du pixel au centre (true = dedans, false = dehors)
+        b = false            # deviendra true si on détecte une discontinuité avec un voisin
+
+        # Si un des 4 voisins (haut/bas/gauche/droite) a un statut différent, alors on est proche de la frontière.
+        # Remarque syntaxe Julia: `if condition; action; end` permet d'écrire l'action sur la même ligne.
         if i > 1    && center_in[i-1, j] != v; b = true; end
         if i < nlat && center_in[i+1, j] != v; b = true; end
         if j > 1    && center_in[i, j-1] != v; b = true; end
         if j < nlon && center_in[i, j+1] != v; b = true; end
+
         boundary[i, j] = b
     end
 end
 
 # Correctif : dilater la limite de 1 pixel (quartier de 4 pixels)
 # Ceci réduit les erreurs de classification des pixels proches de la limite tout en conservant k inchangé.
+# Concrètement: si un pixel est marqué "boundary", on marque aussi ses 4 voisins.
+# Objectif: inclure une petite zone tampon autour de la frontière pour éviter des pixels mal classés en intérieur/extérieur.
 boundary_dil = copy(boundary)
-@threads for i in 1:nlat # utilisaion multi-coeur pour maximiser la vitesse d'execution
+@threads for i in 1:nlat
     for j in 1:nlon
         if boundary[i, j]
             boundary_dil[i, j] = true
@@ -382,33 +401,40 @@ end
 boundary = boundary_dil
 
 # Poids de remplissage : pixels intérieurs -> 0/1 directement, bordure -> calcul coûteux k×k
-weights_frac .= 0.0
+weights_frac .= 0.0 # remplit toute la matrice par 0 sans la recréer.
 
-rows_done2 = Threads.Atomic{Int}(0)
+rows_done2 = Threads.Atomic{Int}(0) # compteur thread-safe pour afficher la progression de la passe 2
 @threads for i in 1:nlat # utilisaion multi-coeur pour maximiser la vitesse d'execution
     for j in 1:nlon
         if !boundary[i, j]
-            weights_frac[i, j] = center_in[i, j] ? 1.0 : 0.0
+            weights_frac[i, j] = center_in[i, j] ? 1.0 : 0.0 # Si pas frontière : poids direct 0 ou 1
             continue
         end
 
-        # Boundary pixel -> k×k subsampling (unchanged)
-        lon0, lon1 = lon_bnds[j], lon_bnds[j+1]
-        lat0, lat1 = lat_bnds[i], lat_bnds[i+1]
+        # Pixel frontière -> calcul plus coûteux: on estime la fraction en échantillonnant k×k points dans le pixel.
+        lon0, lon1 = lon_bnds[j], lon_bnds[j+1]  # bornes en longitude
+        lat0, lat1 = lat_bnds[i], lat_bnds[i+1]  # bornes en latitude
 
         inside = 0
         total = k * k
+
+        # On crée une grille régulière de k×k points.
+        # (a - 0.5)/k place le point au centre de chaque "sous-cellule" -> échantillonnage plus stable.
         for a in 1:k
             x = lon0 + (a - 0.5) * (lon1 - lon0) / k
             for b in 1:k
                 y = lat0 + (b - 0.5) * (lat1 - lat0) / k
+
+                # `condition ? 1 : 0` = opérateur ternaire: ajoute 1 si dedans, sinon 0.
                 inside += inside_france_ll(fr_geos_prepared, pj_ll_to_src, x, y) ? 1 : 0
             end
         end
+
+        # Fraction estimée du pixel couverte par la France.
         weights_frac[i, j] = inside / total
     end
 
-    done = Threads.atomic_add!(rows_done2, 1) + 1
+    done = Threads.atomic_add!(rows_done2, 1) + 1 # atomic_add! : évite que plusieurs threads cassent le compteur
     if done % step == 0 || done == nlat
         pct = round(100 * done / nlat; digits=1)
         println("Pass 2 progress: ", done, "/", nlat, " rows (", pct, "%)")
@@ -431,7 +457,7 @@ println("final_weights min/max/mean = ",
 
 # ============ Sauvegarde dans un NetCDF ==============
 
-isfile(out_weights_nc) && rm(out_weights_nc)
+isfile(out_weights_nc) && rm(out_weights_nc) # si le fichier existe déjà, on le supprime avant de le recréer
 
 wds = NCDataset(out_weights_nc, "c")
 defDim(wds, lat_name, nlat)
@@ -444,7 +470,7 @@ v2   = defVar(wds, "final_weights", Float64, (lat_name, lon_name))
 
 vlat[:] = lats
 vlon[:] = lons
-v1[:, :] = weights_frac
+v1[:, :] = weights_frac    # `[:, :]` = toute la matrice (toutes les lignes et toutes les colonnes)
 v2[:, :] = final_weights
 
 wds.attrib["description"] = "France weights: fraction-in-France (subsample) and final_weights=fraction*cos(lat)"
