@@ -3,6 +3,8 @@ using Glob
 using Statistics
 using Plots
 using Dates
+using GLM
+using DataFrames
 
 data_folder = "Analyse_Meteo/data/raw-yearly-combined/era5_fr_t2m"
 weight_file = "Analyse_Meteo/loic/weights_france_final.nc"
@@ -281,13 +283,9 @@ animate_climatology(MATRICE_MONTHS, 1950:1975, filename="evoltemp1950_1975.gif")
 
 using Statistics
 
-function calculate_pixel_trends(data_3d::AbstractArray{Float64, 3}, years::AbstractVector)
+function calculate_pixel_trends(data_3d::AbstractArray{Float64, 3})
     # data_3d is (Lon, Lat, Time)
     n_lon, n_lat, n_time = size(data_3d)
-    
-    if n_time != length(years)
-        error("Dimension mismatch: 3rd dim of data ($n_time) != length of years ($(length(years)))")
-    end
 
     # Initialize the coefficient grid with NaNs
     slope_grid = fill(NaN, n_lon, n_lat)
@@ -323,30 +321,89 @@ function calculate_pixel_trends(data_3d::AbstractArray{Float64, 3}, years::Abstr
     return slope_grid
 end
 
-warming = calculate_pixel_trends(MATRICE_MONTHS, 1950:1975)
-# 1. Run the calculation
-# MATRICE_MONTHS is the 3D array you created in the previous step
-years = 1950:1975
-trend_map = calculate_pixel_trends(MATRICE_MONTHS, years)
+warming = calculate_pixel_trends(MATRICE_MONTHS)
 
-# 2. Convert to "Total Change" (Optional but easier to read)
-# Instead of "0.02°C/year", we often show "Total warming over 25 years"
-total_change_map = trend_map .* length(years)
+function simple_visu_trend(trend_map::AbstractArray{Float64, 2}, years::AbstractVector)
 
-# 3. Plotting
-# We calculate the max value to center the colors perfectly around 0
-limit = maximum(abs.(filter(!isnan, total_change_map)))
+    total_change_map = trend_map .* length(years)   
+    limit = maximum(abs.(filter(!isnan, total_change_map)))
 
-heatmap(total_change_map', 
-    title = "Total Warming ($(years[1])-$(years[end]))",
-    xlabel = "Longitude",
-    ylabel = "Latitude",
+    heatmap(total_change_map', 
+        title = "Total Warming ($(years[1])-$(years[end]))",
+        xlabel = "Longitude",
+        ylabel = "Latitude",
+
+        c = :balance,       # Blue-White-Red palette
+        clims = (-limit, limit), # Forces 0 to be White
     
-    # Color Settings
-    c = :balance,       # Blue-White-Red palette
-    clims = (-limit, limit), # Forces 0 to be White
+        aspect_ratio = :equal,
+        yflip = true,       # Fix the North/South inversion
+        right_margin = 5Plots.mm
+    )
+end
+
+simple_visu_trend(warming, 1950:1975)
+
+function calculate_trends_glm(data_3d::AbstractArray{Float64, 3})
+    n_lon, n_lat, n_time = size(data_3d)
     
-    aspect_ratio = :equal,
-    yflip = true,       # Fix the North/South inversion
-    right_margin = 5Plots.mm
-)
+    # Initialize grids
+    slope_grid = fill(NaN, n_lon, n_lat)
+    p_value_grid = fill(NaN, n_lon, n_lat)
+    
+    time_steps = 1:n_time
+    X_data = DataFrame(Time = time_steps)
+
+    println("Calculating trends with GLM...")
+
+    for i in 1:n_lon
+        for j in 1:n_lat
+            y_temps = data_3d[i, j, :]
+            
+            if any(isnan.(y_temps))
+                continue
+            end
+            
+            X_data.Temp = y_temps
+            
+            model = lm(@formula(Temp ~ Time), X_data)
+            
+            # Extract Results
+            # coef(model)[2] is the slope (Time coefficient)
+            slope_grid[i, j] = coef(model)[2]
+            
+            # coeftable(model).cols[4][2] is the P-value for Time
+            p_value_grid[i, j] = coeftable(model).cols[4][2]
+        end
+    end
+    
+    return slope_grid, p_value_grid
+end
+
+slope, p_value = calculate_trends_glm(MATRICE_MONTHS)
+
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}, years::AbstractVector)
+
+    # 2. Filter: Keep only significant trends (95% confidence)
+    # We set non-significant pixels to NaN so they don't show up
+    sig_slope_map = copy(slope_map)
+    sig_slope_map[p_map .> 0.05] .= NaN
+
+    # 3. Plot
+    limit = maximum(abs.(filter(!isnan, sig_slope_map)))
+
+    heatmap(sig_slope_map', 
+        title = "Significant Warming Trends (p < 0.05)",
+        c = :balance,
+        clims = (-limit, limit),
+        yflip = true,
+        aspect_ratio = :equal
+    )
+end
+
+glm_visu_trend(slope, grid, 1950:1975)
+
+
+x = 1:62
+y = 1:43
+plot(x, y, MATRICE_MONTHS[:,:,1]',st=:surface)
