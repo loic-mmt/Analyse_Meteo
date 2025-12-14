@@ -1,2 +1,4 @@
 [deps]
+ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
