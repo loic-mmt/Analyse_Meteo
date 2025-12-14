@@ -116,14 +116,19 @@ function geos_point(x::Float64, y::Float64)
     elseif isdefined(LibGEOS, :point)
         return LibGEOS.point(x, y)
     else
-        # Last resort (slower): WKT point
         return geos_from_wkt("POINT ($(x) $(y))")
     end
 end
 
 
 #=
-# contains predicate (works for both prepared and raw geometries)
+Vérifie si le point est dans la géométrie
+
+@inline : demande au compilateur d’inliner (gain perf)
+::Bool : garantit que la fonction renvoie un booléen
+
+- isdefined(module, :name) : check si une fonction existe dans cette version.
+
 =#
 
 @inline function geos_contains(poly, pt)::Bool
@@ -136,12 +141,26 @@ end
     end
 end
 
-# Iterate over all features of an OGR layer and return cloned geometries.
-# ArchGDAL's feature-iteration API differs across versions, so we try multiple approaches.
+
+"""
+Lire les features du shapefile (API ArchGDAL variable) :
+
+Crée un tableau vide qui contiendra des géométries GDAL (IGeometry)
+
+Stratégie 1 - eachfeature : 
+- getfield(Module, :name) récupère la fonction.
+- do feat ... end -> on passe une fonction anonyme à eachf
+
+Stratégie 2 - itéreration direct
+
+Stratégie 3 - boucle par index
+- récupère n (nb features) via plusieurs fonctions possibles
+- récupère getfeat via plusieurs fonctions possibles
+"""
 function layer_feature_geoms(layer)
     geoms = ArchGDAL.IGeometry[]
 
-    # 1) Newer ArchGDAL: ArchGDAL.eachfeature(layer) do feat ... end
+    # Stratégie 1:
     if isdefined(ArchGDAL, :eachfeature)
         eachf = getfield(ArchGDAL, :eachfeature)
         eachf(layer) do feat
@@ -151,7 +170,7 @@ function layer_feature_geoms(layer)
         return geoms
     end
 
-    # 2) Some versions support iterating directly over the layer
+    # Stratégie 2:
     try
         for feat in layer
             g = ArchGDAL.getgeom(feat)
@@ -159,10 +178,9 @@ function layer_feature_geoms(layer)
         end
         return geoms
     catch
-        # fall through
     end
 
-    # 3) Fallback: loop by feature index
+    # Stratégie 3:
     n = if isdefined(ArchGDAL, :nfeature)
         getfield(ArchGDAL, :nfeature)(layer)
     elseif isdefined(ArchGDAL, :getfeaturecount)
@@ -190,14 +208,22 @@ function layer_feature_geoms(layer)
     return geoms
 end
 
+
+"""
+Calcul des bornes pixel.
+
+
+"""
 function compute_bounds(coords::AbstractVector{<:Real})
     N = length(coords)
     N < 2 && error("Need >= 2 coords")
-    mids = 0.5 .* (coords[1:end-1] .+ coords[2:end])
-    b = Vector{Float64}(undef, N + 1)
+    # coords[1:end-1] = tous sauf le dernier
+    # coords[2:end] = tous sauf le premier
+    mids = 0.5 .* (coords[1:end-1] .+ coords[2:end]) # calcule les milieux entre chaque paire de coordonnées successives
+    b = Vector{Float64}(undef, N + 1) # N centres de pixels -> N+1 frontières.
     b[2:end-1] .= mids
-    b[1] = coords[1] + (coords[1] - mids[1])
-    b[end] = coords[end] + (coords[end] - mids[end])
+    b[1] = coords[1] + (coords[1] - mids[1]) # premier bord
+    b[end] = coords[end] + (coords[end] - mids[end]) # dernier bord
     return b
 end
 
@@ -211,7 +237,11 @@ out_weights_nc = "weights_france_final.nc"
 
 ds = NCDataset(sample_nc)
 
-# Cherche le premier nom de variable présent dans le dataset parmi plusieurs possibilités.
+"""
+Cherche le premier nom de variable présent dans 
+le dataset parmi plusieurs possibilités -> pour la reproductibilité 
+dans le cas ou les noms viendraient à changer.
+"""
 function find_coords(ds, keys)
     for k in keys
         if haskey(ds, k)
@@ -224,7 +254,9 @@ end
 lat_name = find_coords(ds, ["latitude", "lat", "Latitude", "LAT"])
 lon_name = find_coords(ds, ["longitude", "lon", "Longitude", "LON"])
 
-# Force vectors Float64 (avoid Vector{Union{Missing,Float64}})
+# Lit toutes les valeurs de la variable latitude / longitude.
+# NCDatasets peut retourner un Vector{Union{Missing,Float64}} (même si aucun missing n'est présent).
+# -> On force ici des vecteurs Float64
 lats_raw = ds[lat_name][:]
 lons_raw = ds[lon_name][:]
 
@@ -240,6 +272,7 @@ nlon = length(lons)
 println("Grid size: nlat=", nlat, " nlon=", nlon, " -> pixels=", nlat * nlon)
 println("Threads: ", Threads.nthreads())
 
+# Calcule les bornes lat/lon.
 lat_bnds = compute_bounds(lats)
 lon_bnds = compute_bounds(lons)
 
@@ -248,7 +281,7 @@ close(ds)
 # ======== Lecture du shapefile (union) + proj lon/lat->CRS shapefile ========
 
 fr_geom_src, pj_ll_to_src = ArchGDAL.read(shp) do dataset
-    layer = ArchGDAL.getlayer(dataset, 0)
+    layer = ArchGDAL.getlayer(dataset, 0) # Prend la couche 0 (première couche du shapefile)
 
     # CRS du shapefile
     srs_src = ArchGDAL.getspatialref(layer)
@@ -287,9 +320,9 @@ end
 k = 8
 weights_frac = zeros(Float64, nlat, nlon)
 
-# -------------------------------
-# Pass 1: center mask (cheap)
-# -------------------------------
+
+# ======== Pass 1: center mask (cheap) ========
+# =============================================
 center_in = falses(nlat, nlon)
 
 println("Pass 1/2: computing center mask (1 contains per pixel)...")
@@ -312,15 +345,15 @@ step = max(1, Int(floor(0.05 * nlat)))
     end
 end
 
-# -------------------------------
-# Pass 2: boundary detection + weights
-# -------------------------------
+
+# ======== Pass 2: boundary detection + weights ========
+# ======================================================
 println("Pass 2/2: detecting boundary pixels and computing weights...")
 
-# Identify boundary pixels: a pixel is boundary if any 4-neighbor differs in center_in.
+# Identifier les pixels de bordure : un pixel est une bordure si l’un de ses 4 voisins diffère en center_in.
 boundary = falses(nlat, nlon)
 
-@threads for i in 1:nlat
+@threads for i in 1:nlat # utilisaion multi-coeur pour maximiser la vitesse d'execution
     for j in 1:nlon
         v = center_in[i, j]
         b = false
@@ -332,10 +365,10 @@ boundary = falses(nlat, nlon)
     end
 end
 
-# ---- Requested patch: dilate boundary by 1 pixel (4-neighborhood) ----
-# This reduces misclassification of near-boundary pixels while keeping k unchanged.
+# Correctif : dilater la limite de 1 pixel (quartier de 4 pixels)
+# Ceci réduit les erreurs de classification des pixels proches de la limite tout en conservant k inchangé.
 boundary_dil = copy(boundary)
-@threads for i in 1:nlat
+@threads for i in 1:nlat # utilisaion multi-coeur pour maximiser la vitesse d'execution
     for j in 1:nlon
         if boundary[i, j]
             boundary_dil[i, j] = true
@@ -348,11 +381,11 @@ boundary_dil = copy(boundary)
 end
 boundary = boundary_dil
 
-# Fill weights: interior pixels -> 0/1 directly, boundary -> expensive k×k
+# Poids de remplissage : pixels intérieurs -> 0/1 directement, bordure -> calcul coûteux k×k
 weights_frac .= 0.0
 
 rows_done2 = Threads.Atomic{Int}(0)
-@threads for i in 1:nlat
+@threads for i in 1:nlat # utilisaion multi-coeur pour maximiser la vitesse d'execution
     for j in 1:nlon
         if !boundary[i, j]
             weights_frac[i, j] = center_in[i, j] ? 1.0 : 0.0
