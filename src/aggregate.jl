@@ -116,4 +116,4 @@ function visu_filtered_climatology(
 end
 
 
-visu_filtered_climatology(data_folder, weights, 1950:1960, selected_months=[1], selected_days=1:15)
+visu_filtered_climatology(data_folder, weights, 1950:1975, selected_months=[1], selected_days=1:15)
