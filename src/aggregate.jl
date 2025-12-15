@@ -19,12 +19,7 @@ weights_bool = ds_b["mask"][:,:]
 close(ds_w)
 close(ds_b)
 
-# Calculate the sum of weights (Denominator for weighted average)
-# We assume 0.0 in the weights means "outside the region"
-total_weight = sum(weights)
 
-days = Int[]
-push!(days, 18)
 
 
 
@@ -123,7 +118,7 @@ end
 
 
 
-visu_filtered_climatology(data_folder, weights, 1950:1975, selected_months=[1,2,3])
+visu_filtered_climatology(data_folder, weights, 1950:1990)
 
 
 function visu_filtered_climatology_maps(
@@ -236,7 +231,7 @@ function visu_filtered_climatology_maps(
     return final_3d_matrix
 end
 
-MATRICE_MONTHS = visu_filtered_climatology_maps(data_folder, weights_bool, 1950:1975)
+MATRICE_MONTHS = visu_filtered_climatology_maps(data_folder, weights_bool, 1950:1990)
 
 
 function animate_climatology(data_3d::AbstractArray{Float64, 3}, valid_years::AbstractVector; filename="temperature_evolution.gif")
@@ -279,9 +274,8 @@ function animate_climatology(data_3d::AbstractArray{Float64, 3}, valid_years::Ab
     println("Saved animation to $filename")
 end
 
-animate_climatology(MATRICE_MONTHS, 1950:1975, filename="evoltemp1950_1975.gif")
+animate_climatology(MATRICE_MONTHS, 1950:1990, filename="evoltemp1950_1975.gif")
 
-using Statistics
 
 function calculate_pixel_trends(data_3d::AbstractArray{Float64, 3})
     # data_3d is (Lon, Lat, Time)
@@ -342,7 +336,7 @@ function simple_visu_trend(trend_map::AbstractArray{Float64, 2}, years::Abstract
     )
 end
 
-simple_visu_trend(warming, 1950:1975)
+simple_visu_trend(warming, 1950:1990)
 
 function calculate_trends_glm(data_3d::AbstractArray{Float64, 3})
     n_lon, n_lat, n_time = size(data_3d)

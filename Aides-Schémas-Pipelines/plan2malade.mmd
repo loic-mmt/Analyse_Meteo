@@ -4,67 +4,56 @@ graph TD
     classDef julia fill:#ce93d8,stroke:#8e24aa,stroke-width:2px,color:black;
     classDef data fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:black;
     classDef dvc fill:#f5f5f5,stroke:#616161,stroke-width:2px,stroke-dasharray: 5 5,color:black;
-    classDef quarto fill:#b2dfdb,stroke:#00897b,stroke-width:2px,color:black;
 
     %% --- External Resources ---
     subgraph External_Resources ["Phase 1: External Inputs"]
         API[("Copernicus API<br>(CDS)")]
         Shapefiles[("data/shapefiles/<br>Regions & Depts")]:::data
-        GDrive[("Google Drive<br>(DVC Remote Storage)")]:::dvc
+        
+        %% DVC Remote with Personal API
+        GDrive[("Google Drive<br>(Personal API)<br>DVC Remote")]:::dvc
     end
 
     %% --- DVC Pipeline (The Core) ---
-    subgraph DVC_Orchestrator ["Phases 2-4: DVC Pipeline (dvc.yaml)"]
+    subgraph DVC_Orchestrator ["Phases 2-3: DVC Pipeline"]
         direction TB
+        
+        %% Step 1: Download
+        Py_DL["src/download.py<br>(Python + cdsapi)"]:::python
+        Raw_Data[/"data/raw/<br>Monthly .nc"/]:::data
+        
+        %% Step 2: Masks (Julia)
+        Jl_Mask["src/make_masks.jl<br>(Julia ArchGDAL & LibGEOS)"]:::julia
+        Mask_Data[/"data/masks/<br>Boolean Mask .nc"/]:::data
 
-        %% Stage 1: Ingestion
-        subgraph Stage_Ingestion ["Stage: Download"]
-            Py_DL["src/download.py<br>(Python + cdsapi)"]:::python
-            Raw_Data[/"data/raw/<br>Hourly .nc (20GB)"/]:::data
-        end
+        %% Step 3: Static Visualization (Julia)
 
-        %% Stage 2: Aggregation
-        subgraph Stage_Aggregation ["Stage: Aggregate"]
-            Py_Agg["src/aggregate.py<br>(Python + Xarray)"]:::python
-            Proc_Data[/"data/processed/<br>Monthly Means .nc"/]:::data
-        end
-
-        %% Stage 3: Geometry (Julia)
-        subgraph Stage_Geometry ["Stage: Compute Masks"]
-            Jl_Mask["src/make_masks.jl<br>(Julia Sub-pixel Algo)"]:::julia
-            Mask_Data[/"data/masks/<br>Fractional Weights .nc"/]:::data
-        end
     end
 
-    %% --- Analysis & Product ---
-    subgraph Product_Layer ["Phases 5-6: Analysis (Quarto)"]
-        Report["analysis/spatial_masking.qmd<br>(Static HTML Report)"]:::quarto
-        Dashboard["analysis/dashboard.qmd<br>(Shiny + OJS App)"]:::quarto
+    %% --- Final Product (Bonito) ---
+    subgraph App_Layer ["Phase 4: Web Application (Julia)"]
+        Jl_App["src/app.jl<br>(Bonito)"]:::julia
+        Jl_Visu["src/visu.jl<br>(Julia Plots, GLM, Glob)"]:::julia
     end
-
     %% --- Connections ---
     
     %% Data Flow
     API ==> Py_DL
     Py_DL ==> Raw_Data
     
-    Raw_Data ==> Py_Agg
-    Py_Agg ==> Proc_Data
-    
-    %% Julia needs Shapefiles AND Grid coordinates from processed data
+    %% Geometry
     Shapefiles ==> Jl_Mask
-    Proc_Data -.->|"Read Lat/Lon"| Jl_Mask
+    Raw_Data -.->|"Read Lat/Lon"| Jl_Mask
     Jl_Mask ==> Mask_Data
 
-    %% Dashboard Logic (The Inputs)
-    Proc_Data --> Report
-    Mask_Data --> Report
+    %% Static Viz Flow
+    Raw_Data --> Jl_Visu
+    Mask_Data --> Jl_Visu
     
-    Proc_Data -->|"Load Means"| Dashboard
-    Mask_Data -->|"Load Weights"| Dashboard
+    %% Web App Flow
+    Jl_Visu --> Jl_App
 
-    %% DVC Sync (Phase 7)
-    Raw_Data -.-o|"dvc push"| GDrive
-    Proc_Data -.-o|"dvc push"| GDrive
-    Mask_Data -.-o|"dvc push"| GDrive
-    Shapefiles -.-o|"dvc push"| GDrive
+    %% DVC Sync (Personal API)
+    Raw_Data o-.-o|"dvc push"| GDrive
+    Mask_Data o-.-o|"dvc push"| GDrive
+    Shapefiles o-.-o|"dvc push"| GDrive
