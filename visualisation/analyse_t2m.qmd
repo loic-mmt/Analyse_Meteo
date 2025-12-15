@@ -14,128 +14,115 @@ execute:
   message: false
 jupyter: julia-1.11
 ---
-
 ```{julia}
-using CairoMakie
+# 1) Packages
+############################
+using NCDatasets
+using Statistics
+using Plots
 using Shapefile
-using GeoInterface
+using GeoInterface  # pour lire les géométries (MultiPolygon, etc.)
 
-# --------------------------------------------------------------------
-# 1. Fonction pour charger tous les points d'un shapefile
-# --------------------------------------------------------------------
-function collect_points_from_shapefile(shp_path::String)
-    xs_all = Float64[]
-    ys_all = Float64[]
+############################
+# 2) Lecture ERA5 NetCDF
+############################
+nc_path = "test_era5_t2m_20250101_0000.nc"  
+ds = NCDataset(nc_path)
+
+t2m = ds["t2m"][:]          
+lat = ds["latitude"][:]
+lon = ds["longitude"][:]
+
+close(ds)
+
+############################
+# 3) Reshape en grille 2D
+############################
+nx, ny = length(lon), length(lat)
+t2m_grid = reshape(t2m, nx, ny)
+
+############################
+# 4) Masque France (simple bbox)
+lat_min, lat_max = 41.0, 51.5
+lon_min, lon_max = -5.0, 9.5
+
+france_mask = falses(nx, ny)
+for i in 1:nx, j in 1:ny
+    france_mask[i, j] = (lat[j] ≥ lat_min && lat[j] ≤ lat_max &&
+                         lon[i] ≥ lon_min && lon[i] ≤ lon_max)
+end
+
+t2m_fr = copy(t2m_grid)
+t2m_fr[.!france_mask] .= NaN
+
+############################
+# 5) Poids spatiaux + moyenne pondérée
+############################
+# Poids = cos(latitude)
+lat_rad = deg2rad.(lat)
+weights_lat = cos.(lat_rad)
+weights_grid = repeat(weights_lat', nx, 1)
+
+vals = t2m_grid[france_mask]
+wts  = weights_grid[france_mask]
+t2m_weighted_mean = sum(vals .* wts) / sum(wts)
+
+println("Weighted mean temperature over France ≈ ",
+        round(t2m_weighted_mean, digits=2), " (units as in NetCDF)")
+
+############################
+# 6) Fonction pour dessiner les contours d’un shapefile (régions)
+############################
+function overlay_shapefile_boundaries!(shp_path::AbstractString; linecolor=:black, lw=0.8)
     tbl = Shapefile.Table(shp_path)
 
     for feat in tbl
-        geom = Shapefile.shape(feat)
+        geom = feat.geometry
+
+        # GeoInterface.coordinates renvoie une structure imbriquée :
+        # Polygon -> [ring1, ring2, ...], ring -> [(x,y), (x,y), ...]
+        # MultiPolygon -> [poly1, poly2, ...]
         coords = GeoInterface.coordinates(geom)
 
-        if coords isa Vector{Vector{Vector{Vector{Float64}}}}   # MultiPolygon
+        # Détecter si MultiPolygon (3 niveaux) ou Polygon (2 niveaux)
+        # MultiPolygon: coords[poly][ring][pt]
+        # Polygon:      coords[ring][pt]
+        if !isempty(coords) && !isempty(coords[1]) && isa(coords[1][1], Tuple)
+            # Polygon
+            for ring in coords
+                xs = first.(ring)
+                ys = last.(ring)
+                plot!(xs, ys; seriestype=:path, color=linecolor, linewidth=lw, label=false)
+            end
+        else
+            # MultiPolygon
             for poly in coords
                 for ring in poly
-                    append!(xs_all, first.(ring))
-                    append!(ys_all, last.(ring))
+                    xs = first.(ring)
+                    ys = last.(ring)
+                    plot!(xs, ys; seriestype=:path, color=linecolor, linewidth=lw, label=false)
                 end
             end
-
-        elseif coords isa Vector{Vector{Vector{Float64}}}       # Polygon
-            for ring in coords
-                append!(xs_all, first.(ring))
-                append!(ys_all, last.(ring))
-            end
         end
     end
-
-    return xs_all, ys_all
+    return nothing
 end
 
-# --------------------------------------------------------------------
-# 2. Chemins vers les shapefiles (Lambert-93)
-# --------------------------------------------------------------------
-regions_shp      = "../data/shapefiles/region.shp"
-departements_shp = "../data/shapefiles/departement.shp"
-
-# On collecte les points pour connaître le cadre de la France
-xs_reg, ys_reg = collect_points_from_shapefile(regions_shp)
-xs_dep, ys_dep = collect_points_from_shapefile(departements_shp)
-
-xmin = min(minimum(xs_reg), minimum(xs_dep))
-xmax = max(maximum(xs_reg), maximum(xs_dep))
-ymin = min(minimum(ys_reg), minimum(ys_dep))
-ymax = max(maximum(ys_reg), maximum(ys_dep))
-
-# On ajoute une petite marge
-dx = 0.05 * (xmax - xmin)
-dy = 0.05 * (ymax - ymin)
-xmin -= dx; xmax += dx
-ymin -= dy; ymax += dy
-
-# --------------------------------------------------------------------
-# 3. Figure Makie (juste la carte)
-# --------------------------------------------------------------------
-fig = Figure(resolution = (800, 600))
-ax = Axis(fig[1, 1],
-    xlabel = "Lambert-93 X (m)",
-    ylabel = "Lambert-93 Y (m)",
-    title  = "Carte de la France\nRégions et départements",
-    aspect = DataAspect()
+############################
+# 7) Visualisation + contours régions
+############################
+p = heatmap(
+    lon, lat, t2m_fr',
+    xlabel="Longitude", ylabel="Latitude",
+    title="ERA5 t2m over France (masked) + regional borders",
+    color=:thermal
 )
 
-xlims!(ax, xmin, xmax)
-ylims!(ax, ymin, ymax)
-
-# --------------------------------------------------------------------
-# 4. Tracer les régions
-# --------------------------------------------------------------------
-tbl_reg = Shapefile.Table(regions_shp)
-for feat in tbl_reg
-    geom = Shapefile.shape(feat)
-    coords = GeoInterface.coordinates(geom)
-
-    if coords isa Vector{Vector{Vector{Vector{Float64}}}}   # MultiPolygon
-        for poly in coords
-            for ring in poly
-                xs = first.(ring)
-                ys = last.(ring)
-                lines!(ax, xs, ys, color = :black, linewidth = 2)
-            end
-        end
-    elseif coords isa Vector{Vector{Vector{Float64}}}       # Polygon
-        for ring in coords
-            xs = first.(ring)
-            ys = last.(ring)
-            lines!(ax, xs, ys, color = :black, linewidth = 2)
-        end
-    end
-end
-
-# --------------------------------------------------------------------
-# 5. Tracer les départements (plus fins)
-# --------------------------------------------------------------------
-tbl_dep = Shapefile.Table(departements_shp)
-for feat in tbl_dep
-    geom = Shapefile.shape(feat)
-    coords = GeoInterface.coordinates(geom)
-
-    if coords isa Vector{Vector{Vector{Vector{Float64}}}}   # MultiPolygon
-        for poly in coords
-            for ring in poly
-                xs = first.(ring)
-                ys = last.(ring)
-                lines!(ax, xs, ys, color = :gray30, linewidth = 1)
-            end
-        end
-    elseif coords isa Vector{Vector{Vector{Float64}}}       # Polygon
-        for ring in coords
-            xs = first.(ring)
-            ys = last.(ring)
-            lines!(ax, xs, ys, color = :gray30, linewidth = 1)
-        end
-    end
-end
-
-fig
-save("carte_france_regions_departements.png", fig)
+# Shapefile des régions (ex: ADMIN_EXPRESS, régions, etc.)
+regions_shp      = "../data/shapefiles/region.shp"
+departements_shp = "../data/shapefiles/departement.shp"
+overlay_shapefile_boundaries!(regions_shp; linecolor=:black, lw=1.0)
+overlay_shapefile_boundaries!(departements_shp; linecolor=:black, lw=0.4)
+savefig(p, "carte_t2m_france.png")
+p
 ```
