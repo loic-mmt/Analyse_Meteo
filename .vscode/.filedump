@@ -1,6 +1,6 @@
 
 		begin
-      f = addfile("/Users/loic/Documents/UGA/Projet_tutore/Analyse_Meteo/tests/era5_t2m_2025_01-02_fr.nc","r")
+      f = addfile("/Users/loic/Documents/UGA/Projet_tutore/Analyse_Meteo/loic/era5_fr_t2m/era5_t2m_fr_1991_01.nc","r")
       print(f)
 		end
     
