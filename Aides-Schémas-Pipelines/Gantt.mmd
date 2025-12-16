@@ -1,26 +1,28 @@
 gantt
-    title Diagramme du Projet Octobre 2025 Avril 2026
+    title Diagramme du Projet (Octobre 2025 - Avril 2026)
     dateFormat YYYY-MM-DD
+    axisFormat %b %y
+    todayMarker off
 
-    section PHASE 1 ACQUISITION Données
-    Mise en place Git DVC               :done, p1_1, 2025-10-01, 2025-10-20
-    Dev Python Connecteur Smart Chunking :done, p1_2, 2025-10-15, 2025-11-10
-    Telechargement Massif ERA5          :done, p1_3, 2025-11-05, 2025-12-20
+    section PHASE 1 ACQUISITION DONNEES
+    Mise en place Git DVC                :done, p1_1, 2025-10-01, 2025-10-20
+    Dev Python Connecteur                :done, p1_2, 2025-10-15, 2025-11-10
+    Telechargement Massif ERA5           :done, p1_3, 2025-11-05, 2025-12-20
 
     section PHASE 2 TRAITEMENT
-    Dev Masquage Spatial                :done, p2_1, 2025-11-20, 2025-12-30
-    Execution Generation NetCDF France  :done, p2_2, 2025-12-30, 2026-01-15
-    Dev Indices Climatiques             :active, p2_3, 2026-01-10, 2026-01-25
-    Execution Calcul Anomalies          :p2_4, 2026-01-25, 2026-02-10
+    Dev Masquage Spatial                 :done, p2_1, 2025-11-20, 2025-12-30
+    Execution Generation NetCDF          :done, p2_2, 2025-12-30, 2026-01-15
+    Dev Indices Climatiques              :active, p2_3, 2026-01-10, 2026-01-25
+    Execution Calcul Anomalies           :p2_4, 2026-01-25, 2026-02-10
 
     section PHASE 3 VISUALISATION
-    Config Environnement Bonito         :done, p3_1, 2025-12-10, 2025-12-20
-    Dev Widgets                         :active, p3_2, 2026-01-15, 2026-02-15
-    Integration Dashboard               :p3_3, 2026-02-15, 2026-02-28
+    Config Environnement Bonito          :done, p3_1, 2025-12-10, 2025-12-20
+    Dev Widgets                          :active, p3_2, 2026-01-15, 2026-02-15
+    Integration Dashboard                :p3_3, 2026-02-15, 2026-02-28
 
     section PHASE 4 RESTITUTION
-    Analyse Scientifique                :p4_1, 2026-03-01, 2026-03-20
-    Redaction Rapport                   :crit, p4_2, 2026-03-15, 2026-04-10
-    Relecture Mise en page              :crit, p4_3, 2026-04-10, 2026-04-18
-    Preparation Soutenance              :crit, p4_4, 2026-04-18, 2026-04-28
-    Soutenance Finale                   :milestone, p4_5, 2026-04-30, 1d
+    Analyse Scientifique                 :p4_1, 2026-03-01, 2026-03-20
+    Redaction Rapport                    :crit, p4_2, 2026-03-15, 2026-04-10
+    Relecture Mise en page               :crit, p4_3, 2026-04-10, 2026-04-18
+    Preparation Soutenance               :crit, p4_4, 2026-04-18, 2026-04-28
+    Soutenance Finale                    :milestone, p4_5, 2026-04-30, 1d
