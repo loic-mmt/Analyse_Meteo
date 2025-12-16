@@ -118,6 +118,8 @@ p = heatmap(
     color=:thermal
 )
 
+#xlims!(p, -6, 10)   
+ylims!(p, 4e6, 8e6)
 # Shapefile des régions (ex: ADMIN_EXPRESS, régions, etc.)
 regions_shp      = "../data/shapefiles/region.shp"
 departements_shp = "../data/shapefiles/departement.shp"
