@@ -1,10 +1,11 @@
-using NCDatasets
-using Glob
-using Statistics
-using Plots
+using NCDatasets # Pour le chargement des datasets .nc
+using Glob #Pour pouvoir chercher des noms de fichiers dans un répèrtoire facillement.
+using Statistics #Pour utiliser moyenne (mean) sur des matrices/dataset
+using StatsPlots
 using Dates
 using GLM
 using DataFrames
+using Base.Threads
 
 data_folder = "Analyse_Meteo/data/raw-yearly-combined/era5_fr_t2m"
 weight_file = "Analyse_Meteo/loic/weights_france_final.nc"
@@ -12,19 +13,17 @@ weight_bool_file = "Analyse_Meteo/src/mask_france_boolean.nc"
 
 ds_w = NCDataset(weight_file)
 ds_b = NCDataset(weight_bool_file)
-# Load weights into memory (2D array: lon x lat)
-# Replace 'weights' with the actual variable name in your mask file
+
 weights = ds_w["final_weights"][:,:]
 weights_bool = ds_b["mask"][:,:]
 close(ds_w)
 close(ds_b)
 
 
-
-
-
-
-function visu_filtered_climatology(
+"""
+Avec threads pour augumenter la vitesse.
+"""
+function visu_filtered_climatology_test(
     data_folder::String, 
     weights::Matrix{Float64}, 
     year_range; 
@@ -32,17 +31,116 @@ function visu_filtered_climatology(
     selected_days::Union{Integer, AbstractVector{<:Integer}, Nothing}=nothing, 
     variable_name="t2m"
 )
-    # FIX 1b: Normalize inputs. If it's a single integer, turn it into a vector.
     if selected_days isa Integer
         selected_days = [selected_days]
     end
 
+    # Pre-transpose weights to match data layout [Lon, Lat]
+    # This avoids transposing inside the loop millions of times
+    weights_t = collect(weights') 
+
+    
+    println("Starting Analysis...")
+    yearly_means = fill(NaN, length(year_range))
+    Threads.@threads for year in year_range
+        # Use a simple array for the buffer (faster than push!)
+        temp_sum = 0.0
+        temp_count = 0
+        
+        for month in selected_months
+            month_str = lpad(month, 2, '0')
+            files = glob("*$(year)_$(month_str)*.nc", data_folder)
+            
+            if isempty(files) continue end
+            
+            NCDataset(files[1]) do ds
+                if !haskey(ds, variable_name) return end
+
+                var = ds[variable_name]
+                times = ds["valid_time"][:] 
+                
+                # Filter indices
+                if isnothing(selected_days)
+                    indices = 1:length(times)
+                else
+                    indices = findall(t -> day(t) in selected_days, times)
+                end
+                
+                if isempty(indices) return end
+
+                # Load chunk of data [Lon, Lat, Time]
+                # Reading all time steps at once is usually faster for disk I/O
+                data_chunk = var[:, :, indices]
+                
+                # --- FAST VECTORIZED CALCULATION ---
+                @inbounds @simd for t in 1:size(data_chunk, 3)
+                    # Get the 2D slice
+                    frame = view(data_chunk, :, :, t) # 'view' avoids copying memory
+                    
+                    # 1. Weighted Product (Fast BLAS operation)
+                    # We utilize the pre-transposed weights_t
+                    w_prod = frame .* weights_t
+                    
+                    # 2. Filter valid data
+                    # (This creates a boolean mask, but it's fast)
+                    valid_mask = .!isnan.(w_prod) .& .!ismissing.(w_prod)
+                    
+                    if any(valid_mask)
+                        # Sum only the valid parts
+                        current_val = sum(w_prod[valid_mask])
+                        current_weight = sum(weights_t[valid_mask])
+                        
+                        if current_weight > 0
+                            temp_sum += (current_val / current_weight)
+                            temp_count += 1
+                        end
+                    end
+                end
+            end 
+        end
+        
+        if temp_count > 0
+            mean_val = temp_sum / temp_count
+            yearly_means[year-minimum(year_range)+1] = mean_val
+            println("Year $year: $(round(mean_val - 273.15, digits=2))°C")
+        end
+    end
+    # Plotting
+    temps_c = yearly_means .- 273.15
+    valid_years = Vector[year_range]
+    p = plot(valid_years, temps_c,
+        title = "Filtered Climatology",
+        label = "Mean Temp",
+        xlabel = "Year", ylabel = "Temperature (°C)",
+        lw = 2, marker = :circle, legend=:topleft
+    )
+    display(p)
+    
+    return temps_c
+end
+"""
+Visualise le changement de température sur une période de temps donnée, au fil des années.
+
+"""
+function visu_filtered_climatology( 
+    data_folder::String, 
+    weights::Matrix{Float64}, 
+    year_range; 
+    selected_months::Vector{Int}=collect(1:12), 
+    selected_days::Union{Integer, AbstractVector{<:Integer}, Nothing}=nothing, 
+    variable_name="t2m"
+)
+    # Transformation si un seul mois 2 -> [2]
+    if selected_days isa Integer
+        selected_days = [selected_days]
+    end
+    weights = weights'
+    #initilisation des mois et années.
     yearly_means = Float64[]
     valid_years = Int[]
     
     println("Starting Analysis...")
     println("Months: $selected_months")
-    println("Days: $(isnothing(selected_days) ? "All" : selected_days)")
 
     for year in year_range
         temp_buffer = Float64[]
@@ -56,43 +154,35 @@ function visu_filtered_climatology(
             end
             
             NCDataset(files[1]) do ds
-                # Check if variable exists before trying to read
-                if !haskey(ds, variable_name)
-                    println("Warning: Var $variable_name not found in $(files[1])")
-                    return # Exits the 'do' block, effectively a 'continue' for the loop
-                end
+
 
                 var = ds[variable_name]
                 times = ds["valid_time"][:] 
                 
-                # --- FILTERING LOGIC ---
                 if isnothing(selected_days)
                     indices_to_keep = 1:length(times)
                 else
                     indices_to_keep = findall(t -> day(t) in selected_days, times)
                 end
                 
-                # FIX 2: Use 'return' inside the 'do' block acts like 'continue' for the loop
-                # If we were outside the 'do' block, we would use 'continue'.
                 if isempty(indices_to_keep)
                     return 
                 end
 
-                # Extract Data
                 data_slice = var[:, :, indices_to_keep]
                 
-                # Calculate Weighted Mean
+                # On calcule la moyenne (weighted)
                 for t in 1:size(data_slice)[3]
                     step_data = data_slice[:, :, t]
-                    w_prod = step_data .* weights' 
+                    w_prod = step_data .* weights
                     
                     valid_mask = .!ismissing.(w_prod) .& .!isnan.(w_prod)
                     if any(valid_mask)
-                        val = sum(w_prod[valid_mask]) / sum(weights'[valid_mask])
+                        val = sum(w_prod[valid_mask]) / sum(weights[valid_mask])
                         push!(temp_buffer, val)
                     end
                 end
-            end # End of NCDataset do-block
+            end
         end
         
         if !isempty(temp_buffer)
@@ -115,10 +205,57 @@ function visu_filtered_climatology(
     return temps_c
 end
 
+means = visu_filtered_climatology(data_folder, weights, 1950:2000)
+means = visu_filtered_climatology_test(data_folder, weights, 1950:2000)
 
+function trends_climate(means::Vector{Float64}, years_range; cutting=0)
+    # Creation du dataframe pour les models et transfer en vecteur des années
+    years_vec = Vector(years_range)
+    df = DataFrame(Year = years_vec, Temp = means)
 
+    # plot de base (scatter points)
+    p = plot(df.Year, df.Temp,
+        title = "Climate Trends Analysis",
+        xlabel = "Year", ylabel = "Temperature (°C)",
+        label = "Observed Mean",
+        seriestype = :scatter, 
+        color = :gray, alpha = 0.5,
+        legend = :topleft,
+        size = (800, 500)
+    )
 
-visu_filtered_climatology(data_folder, weights, 1950:1990)
+    # Calcul du model et de la prédiction
+    model_global = lm(@formula(Temp ~ Year), df)
+    pred_global = predict(model_global, df)
+
+    # ajout de la tendance sur le totalité
+    plot!(p, df.Year, pred_global, 
+        label = "Global trend", color = :black)
+
+    # boucle if si cutting est présent
+    if cutting > minimum(years_range) && cutting < maximum(years_range)
+        
+        # Tri des éléments plus petits que cutting, modélisation et plot
+        df1 = filter(row -> row.Year <= cutting, df)
+        model1 = lm(@formula(Temp ~ Year), df1)
+        pred1 = predict(model1, df1)
+        plot!(p, df1.Year, pred1, label = "First trend", color = :blue)
+
+        # Tri des éléments plus grands que cutting, modélisation et plot
+        df2 = filter(row -> row.Year >= cutting, df)
+        model2 = lm(@formula(Temp ~ Year), df2)
+        pred2 = predict(model2, df2)
+        plot!(p, df2.Year, pred2, label="Second trend", color = :red)
+        
+    end
+
+    display(p)
+    return p
+end
+
+trends_climate(means, 1950:2000, cutting=1980)
+
+means = visu_filtered_climatology(data_folder, weights, 1950:2000)
 
 
 function visu_filtered_climatology_maps(
