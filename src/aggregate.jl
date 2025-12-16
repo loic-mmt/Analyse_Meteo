@@ -8,6 +8,7 @@ using DataFrames
 using Base.Threads
 
 data_folder = "Analyse_Meteo/data/raw-yearly-combined/era5_fr_t2m"
+data_folderRAM = "/dev/shm/era5_fr_t2m"
 weight_file = "Analyse_Meteo/loic/weights_france_final.nc"
 weight_bool_file = "Analyse_Meteo/src/mask_france_boolean.nc"
 
@@ -107,7 +108,7 @@ function visu_filtered_climatology_test(
     end
     # Plotting
     temps_c = yearly_means .- 273.15
-    valid_years = Vector[year_range]
+    valid_years = collect(year_range)
     p = plot(valid_years, temps_c,
         title = "Filtered Climatology",
         label = "Mean Temp",
@@ -191,10 +192,10 @@ function visu_filtered_climatology(
             println("Year $year: $(round(mean(temp_buffer) - 273.15, digits=2))°C")
         end
     end
-
+    extreme = extrema(valid_years)
     temps_c = yearly_means .- 273.15
     p = plot(valid_years, temps_c,
-        title = "Filtered Climatology",
+        title = "Mean temperatures in France, $extreme",
         label = "Mean Temp",
         xlabel = "Year",
         ylabel = "Temperature (°C)",
@@ -205,8 +206,8 @@ function visu_filtered_climatology(
     return temps_c
 end
 
-means = visu_filtered_climatology(data_folder, weights, 1950:2000)
-means = visu_filtered_climatology_test(data_folder, weights, 1950:2000)
+means = visu_filtered_climatology(data_folderRAM, weights, 1950:2025)
+means = visu_filtered_climatology_test(data_folderRAM, weights, 1950:2025)
 
 function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     # Creation du dataframe pour les models et transfer en vecteur des années
