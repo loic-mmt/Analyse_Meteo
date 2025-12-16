@@ -1,0 +1,68 @@
+Calendrier Prévisionnel du Projet (Octobre 2025 – Avril 2026)
+
+PHASE 1 : Infrastructure & Acquisition (Fait)
+Octobre – Décembre 2025
+
+Infrastructure :
+- Mise en place du versioning (Git)
+- stockage de données volumineuses (DVC).
+
+Développement Ingestion (Python) :
+Création du connecteur API et implémentation de la logique de "Smart Chunking" (découpage par année/mois) pour contourner les limites du serveur Copernicus.
+
+Téléchargement Massif :
+Récupération réussie de l'historique ERA5 complet (1950-2025)
+
+
+PHASE 2 : Traitement & Calcul Intensif
+Période : Novembre 2025 - Janvier/Fevrier 2026
+
+- Masquage Spatial (Actif) :
+
+Développement :
+   - Lecture des Shapefiles (Régions/Départements)
+   - algorithme de calcul des poids (Weights).
+
+Exécution :
+  - Génération des fichiers NetCDF masqués pour la France entière
+
+- Indices Climatiques (En cours):
+
+Développement (En cours):
+Implémentation des seuils (Canicule > 30°C, Gel < 0°C).
+
+Exécution :
+Calcul des anomalies de température par rapport à la référence (1950-1980).
+
+PHASE 3 : Visualisation & Interface (FÉVRIER 2026)
+Période : Decembre 2025 - Février 2026
+
+Architecture Interface :
+Configuration de l'environnement Bonito.
+
+Développement des Widgets :
+
+- Création du sélecteur temporel (Slider Années/Mois).
+
+- Implémentation de la carte interactive (Affichage spatial).
+
+- Création des graphiques dynamiques (Courbes d'évolution & Heatmaps).
+
+Intégration :
+Connexion du Dashboard aux données traitées issues de la Phase 2.
+
+PHASE 4 : Analyse & Restitution (MARS – AVRIL 2026)
+Période : Mars – Avril 2026
+
+Analyse Scientifique :
+
+Rédaction du Rapport :
+
+- Rédaction de l'introduction et de la méthodologie technique.
+
+- Synthèse des résultats et discussion scientifique.
+
+- Relecture et mise en page finale.
+
+Soutenance :
+Préparation du support de présentation et répétitions pour la soutenance finale d'avril.
