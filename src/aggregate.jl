@@ -6,6 +6,7 @@ using Dates
 using GLM
 using DataFrames
 using Base.Threads
+using RollingFunctions
 
 data_folder = "Analyse_Meteo/data/raw-yearly-combined/era5_fr_t2m"
 data_folderRAM = "/dev/shm/era5_fr_t2m"
@@ -123,6 +124,24 @@ end
 Visualise le changement de température sur une période de temps donnée, au fil des années.
 
 """
+
+
+
+temps_c = means .- means[1]
+valid_years = collect(1950:2025)
+temps_5y = runmean(temps_c, 5) 
+p = plot(valid_years, temps_c,
+        title = "Filtered Climatology",
+    label = "Annual Mean",
+        xlabel = "Year", ylabel = "Temperature (°C)",
+        lw = 2, marker = :circle, legend=:topleft
+    )
+plot!([1950,2025], [0,0], linewidth=2, color= :yellow, label= "1950 temp ref")
+plot!(valid_years, temps_5y, label="5 Year Average", lw=3, color=:red)
+display(p)
+
+
+
 function visu_filtered_climatology( 
     data_folder::String, 
     weights::Matrix{Float64}, 
@@ -209,6 +228,10 @@ end
 
 means = visu_filtered_climatology(data_folder, weights, 1950:2025)
 means = visu_filtered_climatology_test(data_folder, weights, 1950:2025)
+meanshiver = visu_filtered_climatology_test(data_folder, weights, 1950:2025, selected_months =[1,2,3])
+meansprintemps = visu_filtered_climatology_test(data_folder, weights, 1950:2025, selected_months =[4,5,6])
+meansete = visu_filtered_climatology_test(data_folder, weights, 1950:2025, selected_months =[7,8,9])
+meansautomne = visu_filtered_climatology_test(data_folder, weights, 1950:2025, selected_months =[10,11,12])
 
 function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     # Creation du dataframe pour les models et transfer en vecteur des années
@@ -219,7 +242,7 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     p = plot(df.Year, df.Temp,
         title = "Climate Trends Analysis",
         xlabel = "Year", ylabel = "Temperature (°C)",
-        label = "Observed Mean",
+        label = "Observed Means",
         seriestype = :scatter, 
         color = :pink, alpha = 0.5,
         legend = :topleft,
@@ -231,8 +254,10 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     pred_global = predict(model_global, df)
 
     # ajout de la tendance sur le totalité
-    plot!(p, df.Year, pred_global, 
-        label = "Global trend", color = :purple)
+    slope_global = round(coef(model_global)[2], sigdigits= 2)
+    confiance_global = round(coeftable(model_global).cols[6][2]-coeftable(model_global).cols[5][2], sigdigits=2)
+    plot!(p, df.Year, pred_global,
+        label = "Global trend, slope = $slope_global ± $confiance_global", color = :purple, linewidth=5)
 
     # boucle if si cutting est présent
     if cutting > minimum(years_range) && cutting < maximum(years_range)
@@ -241,13 +266,17 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
         df1 = filter(row -> row.Year <= cutting, df)
         model1 = lm(@formula(Temp ~ Year), df1)
         pred1 = predict(model1, df1)
-        plot!(p, df1.Year, pred1, label = "First trend", color = :yellow)
+        slope1 = round(coef(model1)[2], sigdigits= 2)
+        confiance1 = round(coeftable(model1).cols[6][2]-coeftable(model1).cols[5][2], sigdigits=2)
+        plot!(p, df1.Year, pred1, label = "Trend before $cutting , slope = $slope1 ± $confiance1", color = :yellow, linewidth=5)
 
         # Tri des éléments plus grands que cutting, modélisation et plot
         df2 = filter(row -> row.Year >= cutting, df)
         model2 = lm(@formula(Temp ~ Year), df2)
         pred2 = predict(model2, df2)
-        plot!(p, df2.Year, pred2, label="Second trend", color = :orange)
+        slope2 = round(coef(model2)[2], sigdigits= 2)
+        confiance2 = round(coeftable(model2).cols[6][2]-coeftable(model2).cols[5][2], sigdigits=2)
+        plot!(p, df2.Year, pred2, label="Trend after $cutting , slope = $slope2 ± $confiance2", color = :orange, linewidth=5)
         
     end
 
@@ -255,8 +284,8 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     return p
 end
 
-trends_climate(means, 1950:2025, cutting=1980)
-trends_climate(means, 1950:2025)
+trends_climate(meansautomne, 1950:2025, cutting=1980)
+trends_climate(means, 1950:2025, cutting=1990)
 
 function visu_filtered_climatology_maps(
     data_folder::String, 
@@ -366,7 +395,8 @@ function visu_filtered_climatology_maps(
 end
 
 MATRICE_MONTHS = visu_filtered_climatology_maps(data_folder, weights_bool, 1950:2025)
-
+MATRICE_MONTHS1 = visu_filtered_climatology_maps(data_folder, weights_bool, 1950:1990)
+MATRICE_MONTHS2 = visu_filtered_climatology_maps(data_folder, weights_bool, 1990:2025)
 
 function animate_climatology(data_3d::AbstractArray{Float64, 3}, valid_years::AbstractVector; filename="temperature_evolution.gif")
     
@@ -470,7 +500,7 @@ function simple_visu_trend(trend_map::AbstractArray{Float64, 2}, years::Abstract
     )
 end
 
-simple_visu_trend(warming, 1950:1990)
+simple_visu_trend(warming, 1950:2025)
 
 function calculate_trends_glm(data_3d::AbstractArray{Float64, 3})
     n_lon, n_lat, n_time = size(data_3d)
@@ -509,27 +539,33 @@ function calculate_trends_glm(data_3d::AbstractArray{Float64, 3})
 end
 
 slope, p_value = calculate_trends_glm(MATRICE_MONTHS)
+slope1, p_value1 = calculate_trends_glm(MATRICE_MONTHS1)
+slope2, p_value2 = calculate_trends_glm(MATRICE_MONTHS2)
 
-function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}, years::AbstractVector)
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2})
 
     # 2. Filter: Keep only significant trends (95% confidence)
     # We set non-significant pixels to NaN so they don't show up
     sig_slope_map = copy(slope_map)
-    sig_slope_map[p_map .> 0.05] .= NaN
+    print(length(sig_slope_map[p_map .> 0.05]))
+    #sig_slope_map[p_map .> 0.05] .= NaN
 
     # 3. Plot
     limit = maximum(abs.(filter(!isnan, sig_slope_map)))
-
+    print(limit)
     heatmap(sig_slope_map', 
-        title = "Significant Warming Trends (p < 0.05)",
+        title = "Significant Warming Trends",
         c = :balance,
-        clims = (-limit, limit),
+        #clims = (-limit, limit),
+        clims = (-0.065, 0.065),
         yflip = true,
         aspect_ratio = :equal
     )
 end
 
-glm_visu_trend(slope, grid, 1950:1975)
+glm_visu_trend(slope, p_value)
+glm_visu_trend(slope1, p_value1)
+glm_visu_trend(slope2, p_value2)
 
 
 x = 1:62
