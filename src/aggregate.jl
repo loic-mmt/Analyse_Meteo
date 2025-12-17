@@ -131,12 +131,13 @@ function visu_filtered_climatology(
     selected_days::Union{Integer, AbstractVector{<:Integer}, Nothing}=nothing, 
     variable_name="t2m"
 )
-    # Transformation si un seul mois 2 -> [2]
+    # Transformation if one month, 2 -> [2]
     if selected_days isa Integer
         selected_days = [selected_days]
     end
+    # Weights trnsposition is necessary.
     weights = weights'
-    #initilisation des mois et années.
+    # Initilisation des mois et années.
     yearly_means = Float64[]
     valid_years = Int[]
     
@@ -206,8 +207,8 @@ function visu_filtered_climatology(
     return temps_c
 end
 
-means = visu_filtered_climatology(data_folderRAM, weights, 1950:2025)
-means = visu_filtered_climatology_test(data_folderRAM, weights, 1950:2025)
+means = visu_filtered_climatology(data_folder, weights, 1950:2025)
+means = visu_filtered_climatology_test(data_folder, weights, 1950:2025)
 
 function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     # Creation du dataframe pour les models et transfer en vecteur des années
@@ -220,7 +221,7 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
         xlabel = "Year", ylabel = "Temperature (°C)",
         label = "Observed Mean",
         seriestype = :scatter, 
-        color = :gray, alpha = 0.5,
+        color = :pink, alpha = 0.5,
         legend = :topleft,
         size = (800, 500)
     )
@@ -231,7 +232,7 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
 
     # ajout de la tendance sur le totalité
     plot!(p, df.Year, pred_global, 
-        label = "Global trend", color = :black)
+        label = "Global trend", color = :purple)
 
     # boucle if si cutting est présent
     if cutting > minimum(years_range) && cutting < maximum(years_range)
@@ -240,13 +241,13 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
         df1 = filter(row -> row.Year <= cutting, df)
         model1 = lm(@formula(Temp ~ Year), df1)
         pred1 = predict(model1, df1)
-        plot!(p, df1.Year, pred1, label = "First trend", color = :blue)
+        plot!(p, df1.Year, pred1, label = "First trend", color = :yellow)
 
         # Tri des éléments plus grands que cutting, modélisation et plot
         df2 = filter(row -> row.Year >= cutting, df)
         model2 = lm(@formula(Temp ~ Year), df2)
         pred2 = predict(model2, df2)
-        plot!(p, df2.Year, pred2, label="Second trend", color = :red)
+        plot!(p, df2.Year, pred2, label="Second trend", color = :orange)
         
     end
 
@@ -254,10 +255,8 @@ function trends_climate(means::Vector{Float64}, years_range; cutting=0)
     return p
 end
 
-trends_climate(means, 1950:2000, cutting=1980)
-
-means = visu_filtered_climatology(data_folder, weights, 1950:2000)
-
+trends_climate(means, 1950:2025, cutting=1980)
+trends_climate(means, 1950:2025)
 
 function visu_filtered_climatology_maps(
     data_folder::String, 
@@ -295,9 +294,6 @@ function visu_filtered_climatology_maps(
             end
             
             NCDataset(files[1]) do ds
-                if !haskey(ds, variable_name)
-                    return # Skip this file
-                end
 
                 var = ds[variable_name]
                 times = ds["valid_time"][:] 
@@ -369,7 +365,7 @@ function visu_filtered_climatology_maps(
     return final_3d_matrix
 end
 
-MATRICE_MONTHS = visu_filtered_climatology_maps(data_folder, weights_bool, 1950:1990)
+MATRICE_MONTHS = visu_filtered_climatology_maps(data_folder, weights_bool, 1950:2025)
 
 
 function animate_climatology(data_3d::AbstractArray{Float64, 3}, valid_years::AbstractVector; filename="temperature_evolution.gif")
@@ -396,8 +392,8 @@ function animate_climatology(data_3d::AbstractArray{Float64, 3}, valid_years::Ab
         
         heatmap(current_map,
             title = "Mean Temperature: $year",
-            clims = (min_val, max_val), # FIXED SCALING
-            c = :inferno,               # Color palette
+            clims = (min_val, max_val),
+            c = :thermal,   # Color palette
             xlabel = "Longitude",
             ylabel = "Latitude",
             aspect_ratio = :equal,
@@ -412,7 +408,7 @@ function animate_climatology(data_3d::AbstractArray{Float64, 3}, valid_years::Ab
     println("Saved animation to $filename")
 end
 
-animate_climatology(MATRICE_MONTHS, 1950:1990, filename="evoltemp1950_1975.gif")
+animate_climatology(MATRICE_MONTHS, 1950:2025, filename="evoltemp1950_2025thermal.gif")
 
 
 function calculate_pixel_trends(data_3d::AbstractArray{Float64, 3})
