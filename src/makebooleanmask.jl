@@ -28,9 +28,9 @@ end
 # ==========================================
 # 2. CONFIGURATION
 # ==========================================
-sample_nc     = "/mnt/data/ProjetMeteo/Analyse_Meteo/tests/era5_t2m_2025_01-02_fr.nc"
+sample_nc     = "/mnt/data/ProjetMeteo/data/era5_land_hourly/era5_land_fr_1950_01.nc"
 shp_file      = "/mnt/data/ProjetMeteo/Analyse_Meteo/data/shapefiles/region.shp"
-output_file   = "mask_france_boolean.nc"
+output_file   = "mask_france_boolean_land.nc"
 
 # ==========================================
 # 3. LOAD DATA
