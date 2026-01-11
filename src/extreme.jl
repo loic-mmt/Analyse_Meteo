@@ -47,7 +47,7 @@ function calculate_extremes(data_folder, mask, nb_pixels, year_range)
         files = glob("*$(year)_*.nc", data_folder)
 
         if isempty(files)
-            println("⚠️ Pas de données pour l'année $year")
+            println("Pas de données pour l'année $year")
             continue
         end
 

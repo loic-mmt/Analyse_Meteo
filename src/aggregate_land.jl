@@ -308,7 +308,7 @@ function visu_filtered_climatology_maps(
             # Global attributes can be set anytime
             ds_out.attrib["title"] = "Processed Climatology"
         end
-        println("✅ Export successful!")
+        println("Export successful")
     end
     
     return final_3d_matrix
