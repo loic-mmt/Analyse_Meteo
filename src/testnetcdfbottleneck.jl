@@ -61,7 +61,7 @@ function convert_to_fast_format(data_folder, output_file)
     # compress=true uses LZ4, which is insanely fast to decompress compared to NetCDF
     jldsave(output_file; lats, lons, all_temps, all_years, all_months, compress=true)
     
-    println("\n✅ Done! File saved: $output_file")
+    println("\n Done. File saved: $output_file")
 end
 
 # Run it
