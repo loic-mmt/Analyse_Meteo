@@ -8,7 +8,7 @@ using DataFrames
 using Base.Threads
 using RollingFunctions
 
-data_folder = "/mnt/data/ProjetMeteo/data/era5_land_hourly"
+data_folder = "/mnt/data/ProjetMeteo/Analyse_Meteo/data/raw-yearly-combined/era5_land_hourly"
 data_folderRAM = "/dev/shm/era5_fr_t2m"
 #weight_file = "Analyse_Meteo/loic/weights_france_final.nc"
 #weight_bool_file = "Analyse_Meteo/src/mask_france_boolean.nc"
@@ -174,7 +174,7 @@ end
 animate_climatology(MATRICE_MONTHS, 1950:1975, filename="evoltemp1950_2025thermal.gif")
 
 
-function visu_filtered_climatology_maps(
+function visu_filtered_climatology_maps_export(
     data_folder::String, 
     weights::Matrix{Float64}, 
     year_range; 
@@ -315,9 +315,170 @@ function visu_filtered_climatology_maps(
 end
 
 
-matrix = visu_filtered_climatology_maps(
+matrix = visu_filtered_climatology_maps_export(
     data_folder, 
     weights_bool, 
     1950:2025,
     export_path="output_climate_land.nc"
+)
+
+
+
+function visu_monthly_means_export(
+    data_folder::String, 
+    weights::Matrix{Float64}, 
+    year_range; 
+    selected_months::Vector{Int}=collect(1:12), 
+    selected_days::Union{Integer, AbstractVector{<:Integer}, Nothing}=nothing, 
+    variable_name="t2m",
+    export_path::Union{String, Nothing}=nothing
+)
+    # 1. Normalize inputs
+    if selected_days isa Integer
+        selected_days = [selected_days]
+    end
+
+    # Prepare Mask
+    visual_mask = fill(NaN, size(weights)) 
+    visual_mask[weights .> 0.9] .= 1.0
+
+    # Containers for results
+    monthly_maps_list = Matrix{Float64}[]
+    valid_dates = Date[] # We will store exact dates (e.g. 1950-01-01)
+    
+    # Capture coordinates for export
+    lons_vector = nothing
+    lats_vector = nothing
+    
+    println("Starting Monthly Analysis...")
+
+    for year in year_range
+        for month in selected_months
+            # --- PROCESS ONE MONTH AT A TIME ---
+            
+            month_str = lpad(month, 2, '0')
+            files = glob("*$(year)_$(month_str)*.nc", data_folder)
+            
+            if isempty(files) 
+                continue 
+            end
+            
+            # Temporary grids for this specific month
+            month_sum_grid = nothing
+            month_count_grid = nothing
+            
+            NCDataset(files[1]) do ds
+                # Capture Coords (Once)
+                if isnothing(lons_vector)
+                    lons_vector = ds["longitude"][:]
+                    lats_vector = ds["latitude"][:]
+                end
+
+                var = ds[variable_name]
+                times = ds["valid_time"][:] # Or "time" depending on file version
+                
+                # Filter days (if user wants only specific days of the month)
+                if isnothing(selected_days)
+                    indices_to_keep = 1:length(times)
+                else
+                    indices_to_keep = findall(t -> day(t) in selected_days, times)
+                end
+                
+                if isempty(indices_to_keep) return end
+
+                # Extract Data Slice [Lon, Lat, Time]
+                data_slice = var[:, :, indices_to_keep]
+                
+                if isnothing(month_sum_grid)
+                    dims = size(data_slice)
+                    month_sum_grid = zeros(Float64, dims[1], dims[2])
+                    month_count_grid = zeros(Int, dims[1], dims[2])
+                end
+
+                # Accumulate data for this month
+                for t in 1:size(data_slice)[3]
+                    frame = data_slice[:, :, t]
+                    valid_mask = .!ismissing.(frame) .& .!isnan.(frame)
+                    
+                    if any(valid_mask)
+                        month_sum_grid[valid_mask] .+= frame[valid_mask]
+                        month_count_grid[valid_mask] .+= 1
+                    end
+                end
+            end 
+
+            # --- SAVE MONTHLY RESULT ---
+            if !isnothing(month_sum_grid) && any(month_count_grid .> 0)
+                mean_grid = fill(NaN, size(month_sum_grid))
+                valid_pixels = month_count_grid .> 0
+                
+                mean_grid[valid_pixels] .= month_sum_grid[valid_pixels] ./ month_count_grid[valid_pixels]
+                
+                mean_grid = mean_grid .* visual_mask'
+                mean_grid .-= 273.15 # Kelvin -> Celsius
+                
+                push!(monthly_maps_list, mean_grid)
+                
+                # Store the date (1st of the month) for the time axis
+                push!(valid_dates, Date(year, month, 1))
+                
+                # Optional: Print progress less often to avoid spam
+                println("Processed $year-$month")
+            end
+        end
+        println("Year $year finished.")
+    end
+
+    if isempty(monthly_maps_list)
+        println("No data found!")
+        return Array{Float64}(undef, 0, 0, 0)
+    end
+
+    # Stack to 3D Matrix [Lon, Lat, Time]
+    final_3d_matrix = cat(monthly_maps_list..., dims=3)
+    println("Final dimensions: $(size(final_3d_matrix)) (Lon x Lat x Months)")
+
+    # --- 2. EXPORT LOGIC (NetCDF) ---
+    if !isnothing(export_path)
+        println("Exporting to $export_path ...")
+        
+        # Ensure we delete the file if it exists to avoid conflicts
+        rm(export_path, force=true)
+
+        NCDataset(export_path, "c") do ds_out
+            # Define Dimensions
+            defDim(ds_out, "longitude", length(lons_vector))
+            defDim(ds_out, "latitude", length(lats_vector))
+            defDim(ds_out, "time", length(valid_dates)) # Changed 'year' to 'time'
+            
+            # Save Coordinates
+            v_lon = defVar(ds_out, "longitude", Float64, ("longitude",))
+            v_lon[:] = lons_vector
+            
+            v_lat = defVar(ds_out, "latitude", Float64, ("latitude",))
+            v_lat[:] = lats_vector
+            v_time = defVar(ds_out, "time", valid_dates, ("time",))
+            # Save Variable
+            v_temp = defVar(ds_out, "temperature", Float64, ("longitude", "latitude", "time"), attrib = [
+                "_FillValue" => NaN,
+                "units" => "Celsius",
+                "long_name" => "Monthly Mean Temperature"
+            ])
+            
+            v_temp[:,:,:] = final_3d_matrix
+            
+            ds_out.attrib["title"] = "Processed Monthly Climatology"
+        end
+        println("Export successful")
+    end
+    
+    return final_3d_matrix
+end
+
+
+matrix_months = visu_monthly_means_export(
+    data_folder, 
+    weights_bool, 
+    1950:2025,
+    export_path="climate_land_months.nc"
 )
