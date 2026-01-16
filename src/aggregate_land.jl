@@ -11,9 +11,9 @@ using RollingFunctions
 data_folder = "/mnt/data/ProjetMeteo/Analyse_Meteo/data/raw-yearly-combined/era5_land_hourly"
 data_folderRAM = "/dev/shm/era5_fr_t2m"
 #weight_file = "Analyse_Meteo/loic/weights_france_final.nc"
-#weight_bool_file = "Analyse_Meteo/src/mask_france_boolean.nc"
+weight_bool_file = "src/mask_france_boolean.nc"
 weight_file ="/mnt/data/ProjetMeteo/Analyse_Meteo/loic/weights_france_final.nc"
-weight_bool_file = "/mnt/data/ProjetMeteo/Analyse_Meteo/src/mask_france_boolean_land.nc"
+#weight_bool_file = "/mnt/data/ProjetMeteo/Analyse_Meteo/src/mask_france_boolean_land.nc"
 ds_w = NCDataset(weight_file)
 ds_b = NCDataset(weight_bool_file)
 
@@ -477,8 +477,238 @@ end
 
 
 matrix_months = visu_monthly_means_export(
-    data_folder, 
+    "data/raw-yearly-combined/era5_fr_t2m", 
     weights_bool, 
     1950:2025,
-    export_path="climate_land_months.nc"
+    export_path="mean_months_basic.nc"
 )
+
+
+"""
+    compute_general_climatology(data_folder, weights, year_range; mode, ...)
+
+Fonction universelle pour calculer des cartes climatologiques (moyennes spatiales).
+
+Arguments:
+- `mode`: Définit le niveau d'agrégation.
+    - `:monthly`: Une carte par mois (ex: Janvier 1950, Février 1950...).
+    - `:yearly`: Une carte par an (moyenne de tous les mois sélectionnés pour 1950).
+    - `:total`: Une seule carte unique pour toute la période (Moyenne globale).
+"""
+function compute_general_climatology(
+    data_folder::String,                                         # Dossier contenant les fichiers NetCDF bruts
+    weights::Matrix{Float64},                                    # Matrice de poids (pour le masque visuel ici)
+    year_range;                                                  # Plage d'années (ex: 1950:2020)
+    mode::Symbol=:monthly,                                       # Mode d'agrégation (:monthly, :yearly, ou :total)
+    selected_months::Vector{Int}=collect(1:12),                  # Mois à inclure (par défaut 1 à 12)
+    selected_days::Union{Integer, AbstractVector{<:Integer}, Nothing}=nothing, # Jours spécifiques à garder (optionnel)
+    variable_name="t2m",                                         # Nom de la variable dans le NetCDF
+    export_path::Union{String, Nothing}=nothing                  # Chemin pour sauvegarder le résultat (optionnel)
+)
+    
+    # Si l'utilisateur a donné un seul entier pour les jours, on le transforme en vecteur
+    if selected_days isa Integer; selected_days = [selected_days]; end
+
+    # Vérification de sécurité : le mode doit être valide
+    if mode ∉ [:monthly, :yearly, :total]
+        error("Le mode doit être :monthly, :yearly, ou :total")
+    end
+
+    weights = weights'
+
+    # Dictionnaires pour accumuler les données. 
+    # Clé (Date ou Année) -> Matrice de Somme des températures
+    sums_dict = Dict{Any, Matrix{Float64}}()
+    # Clé (Date ou Année) -> Matrice de Compteur (nombre de mesures valides)
+    counts_dict = Dict{Any, Matrix{Int}}()
+    
+    # Liste pour garder l'ordre chronologique des clés (car les Dicts sont désordonnés)
+    ordered_keys = []
+
+    println("Démarrage de l'analyse (Mode: $mode)...")
+
+    # --- 2. BOUCLE PRINCIPALE DE TRAITEMENT ---
+    
+    # On parcourt chaque année demandée
+    for year in year_range
+        
+        # On parcourt chaque mois sélectionné (par défaut tous)
+        for month in selected_months
+            # Formatage du mois en chaîne de caractères (ex: 5 -> "05") pour le nom de fichier
+            month_str = lpad(month, 2, '0')
+            # Recherche du fichier correspondant à cette année et ce mois
+            files = glob("*$(year)_$(month_str)*.nc", data_folder)
+            
+            # Si aucun fichier n'est trouvé, on passe au mois suivant
+            if isempty(files) continue end
+
+            # Ouverture du fichier NetCDF en mode lecture sécurisée (bloc 'do')
+            NCDataset(files[1]) do ds
+                # Chargement de la variable température (sans tout lire en RAM si possible)
+                var = ds[variable_name]
+                # Chargement de l'axe temporel
+                times = ds["valid_time"][:]
+                
+                # --- FILTRAGE TEMPOREL (JOURS) ---
+                if isnothing(selected_days)
+                    # Si pas de filtre, on garde tous les index temporels
+                    indices = 1:length(times)
+                else
+                    # Sinon, on cherche les index où le jour correspond à la demande
+                    indices = findall(t -> day(t) in selected_days, times)
+                end
+                
+                # Si on a des données à traiter pour ce fichier
+                if !isempty(indices)
+                    # On charge uniquement la tranche de données utile en mémoire
+                    data_slice = var[:, :, indices]
+                    
+                    # On boucle sur chaque pas de temps (chaque heure/jour du fichier)
+                    for t in 1:length(indices)
+                        # Récupération de la date exacte de cette image
+                        current_time = times[indices[t]]
+                        
+                        # --- LOGIQUE DE GÉNÉRATION DE LA CLÉ (BINNING) ---
+                        if mode == :monthly
+                            # Clé = Le 1er du mois (ex: 1950-01-01). Tous les jours de Janvier vont ici.
+                            key = Date(year, month, 1) 
+                        elseif mode == :yearly
+                            # Clé = L'année (ex: 1950). Tous les mois de 1950 vont ici.
+                            key = year
+                        elseif mode == :total
+                            # Clé = Une constante unique. Tout va dans le même panier.
+                            key = "Total Average" 
+                        end
+
+                        # Initialisation des matrices dans le dictionnaire si c'est la 1ère fois qu'on voit cette clé
+                        if !haskey(sums_dict, key)
+                            # Récupération des dimensions spatiales (Lon, Lat)
+                            dims = size(data_slice)[1:2]
+                            # Création d'une matrice de zéros pour les sommes
+                            sums_dict[key] = zeros(Float64, dims)
+                            # Création d'une matrice de zéros pour les compteurs
+                            counts_dict[key] = zeros(Int, dims)
+                            # On note cette clé dans notre liste ordonnée
+                            push!(ordered_keys, key)
+                        end
+
+                        # --- ACCUMULATION ---
+                        # Extraction de l'image 2D pour ce pas de temps 't'
+                        frame = data_slice[:, :, t]
+                        # Création d'un masque : on ne garde que ce qui n'est ni Missing ni NaN
+                        valid = .!ismissing.(frame) .& .!isnan.(frame)
+                        
+                        # Si l'image contient au moins un pixel valide
+                        if any(valid)
+                            # On ajoute les températures valides à la somme cumulative
+                            sums_dict[key][valid] .+= frame[valid]
+                            # On incrémente le compteur pour ces pixels
+                            counts_dict[key][valid] .+= 1
+                        end
+                    end
+                end
+            end # Fermeture automatique du fichier NetCDF ici
+        end
+        # Petit affichage de progression (réécrit la ligne pour ne pas spammer)
+        print("\rAnnée traitée : $year   ")
+    end
+    println("\nAgrégation terminée. Calcul des moyennes...")
+
+    # --- 3. CALCUL DES MOYENNES FINALES ---
+    
+    # Liste pour stocker les cartes finales (matrices 2D)
+    final_maps = Matrix{Float64}[]
+    # Liste pour stocker l'axe temporel final
+    valid_times = [] 
+
+    # Tri des clés pour garantir l'ordre chronologique (essentiel pour NetCDF)
+    if mode == :monthly || mode == :yearly
+        sort!(ordered_keys)
+    end
+    # (Pour :total, il n'y a qu'une seule clé, l'ordre importe peu)
+
+    # On parcourt chaque période agrégée (chaque clé)
+    for key in ordered_keys
+        sum_grid = sums_dict[key]      # La matrice des sommes totales
+        count_grid = counts_dict[key]  # La matrice du nombre de mesures
+        
+        # On ne traite que si on a au moins une donnée
+        if any(count_grid .> 0)
+            # Calcul de la moyenne arithmétique (Somme / Nombre)
+            mean_grid = sum_grid ./ count_grid
+            
+            # Application du masque visuel (pour cacher l'océan ou zones hors France)
+ 
+            mean_grid = mean_grid .* weights
+
+
+            # Conversion Kelvin -> Celsius
+            mean_grid .-= 273.15
+            
+            # Ajout de la carte finale à la liste
+            push!(final_maps, mean_grid)
+            # Ajout du temps correspondant à l'axe temporel
+            push!(valid_times, key)
+        end
+    end
+
+    # Sécurité : si aucune donnée n'a été trouvée
+    if isempty(final_maps)
+        println("Aucune donnée trouvée !")
+        return Array{Float64}(undef, 0, 0, 0)
+    end
+
+    # Empilement des matrices 2D pour créer un cube 3D [Longitude, Latitude, Temps]
+    # 'dims=3' signifie qu'on ajoute la dimension temporelle
+    final_3d_matrix = cat(final_maps..., dims=3)
+    println("Dimensions finales : $(size(final_3d_matrix))")
+
+    # --- 4. EXPORT NETCDF (OPTIONNEL) ---
+    if !isnothing(export_path)
+        println("Exportation vers $export_path ...")
+        # Suppression du fichier s'il existe déjà pour éviter les conflits
+        rm(export_path, force=true)
+
+        # Création du nouveau fichier NetCDF
+        NCDataset(export_path, "c") do ds_out
+            # Récupération des dimensions finales
+            (nx, ny, nt) = size(final_3d_matrix)
+            
+            # Définition des dimensions dans le fichier
+            defDim(ds_out, "longitude", nx)
+            defDim(ds_out, "latitude", ny)
+            
+            # Le nom de la dimension temps change selon le mode
+            time_dim_name = (mode == :monthly || mode == :total) ? "time" : "year"
+            defDim(ds_out, time_dim_name, nt)
+            
+            # --- Sauvegarde des Variables ---
+            
+            # Sauvegarde de l'axe temporel
+            if mode == :monthly
+                # Pour les mois : on stocke des objets Date (convertis auto en "days since...")
+                defVar(ds_out, "time", valid_times, ("time",))
+            elseif mode == :yearly
+                # Pour les années : on stocke des entiers
+                defVar(ds_out, "year", Int32, ("year",))[:] = valid_times
+            else
+                # Pour le total : on crée un temps fictif
+                defVar(ds_out, "time", [0.0], ("time",))
+            end
+            
+            # Définition de la variable Température avec ses attributs (unités, valeur manquante)
+            v_temp = defVar(ds_out, "temperature", Float64, ("longitude", "latitude", time_dim_name), attrib = [
+                "_FillValue" => NaN,
+                "units" => "Celsius",
+                "long_name" => "$mode Mean Temperature"
+            ])
+            
+            # Écriture des données de la matrice 3D dans le fichier
+            v_temp[:,:,:] = final_3d_matrix
+        end
+        println("Export réussi.")
+    end
+    
+    # Retourne la matrice 3D pour utilisation immédiate dans Julia
+    return final_3d_matrix
+end
