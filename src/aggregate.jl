@@ -30,9 +30,11 @@ weights_bool_precise = ds_b_p["mask"][:,:]
 
 # Fermeture des NCdataset pour éviter trop de poids sur la RAM
 close(ds_p_b)
-close(ds_p_p)
+#close(ds_p_p)
 close(ds_b_b)
 close(ds_b_p)
+
+compute_general_climatology(data_folder_basic, weights_prop_basic, 1950:2025, export_path = "monthtest3.nc"; mode = :yearly)
 
 
 
@@ -62,7 +64,7 @@ function compute_general_climatology(
     data_folder::String, 
     weights::Matrix{Float64}, 
     year_range; 
-    mode::Symbol=:monthly, 
+    mode::Symbol=:total, 
     selected_months::Vector{Int}=collect(1:12), 
     selected_days=nothing, 
     variable_name="t2m",
@@ -71,8 +73,7 @@ function compute_general_climatology(
     # 1. Accumulate Raw Data
     println("Step 1: Accumulating data...")
     (sums, counts, lons, lats) = accumulate_data(
-        data_folder, year_range, mode, selected_months, selected_days, variable_name
-    )
+        data_folder, year_range, mode, selected_months, selected_days, variable_name)
 
     # 2. Compute Means & Cube 
     println("Step 2: Computing means...")
@@ -82,8 +83,7 @@ function compute_general_climatology(
     if !isnothing(export_path)
         println("Step 3: Exporting...")
         save_climatology_netcdf(
-            export_path, final_cube, valid_times, lons, lats, mode
-        )
+            export_path, final_cube, valid_times, lons, lats, mode)
     end
 
     return final_cube
@@ -201,33 +201,30 @@ Retourne un tuple :
 - `(final_3d_matrix, valid_times)`
 """
 function finalize_cube(sums_dict, counts_dict, weights, mode)
-    # Prepare Mask
+
+    weights=weights'
     visual_mask = fill(NaN, size(weights))
-    visual_mask[weights .> 0.9] .= 1.0
+    visual_mask[weights .> 0.0] = 1.0
 
     # Sort keys chronologically
-    keys = collect(keys(sums_dict))
+    all_keys = collect(keys(sums_dict))
     if mode != :total
-        sort!(keys)
+        sort!(all_keys)
     end
 
     map_list = Matrix{Float64}[]
     valid_times = []
 
-    for k in keys
+    for k in all_keys
         if any(counts_dict[k] .> 0)
             # Mean = Sum / Count
             mean_grid = sums_dict[k] ./ counts_dict[k]
             
-            # Apply Mask (transpose safety)
-            if size(visual_mask) != size(mean_grid)
-                mean_grid .*= visual_mask'
-            else
-                mean_grid .*= visual_mask
-            end
-
             # Kelvin -> Celsius
             mean_grid .-= 273.15
+
+            mean_grid .*= visual_mask
+
             
             push!(map_list, mean_grid)
             push!(valid_times, k)
