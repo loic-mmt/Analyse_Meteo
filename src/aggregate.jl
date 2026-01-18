@@ -34,7 +34,7 @@ close(ds_p_b)
 close(ds_b_b)
 close(ds_b_p)
 
-compute_general_climatology(data_folder_basic, weights_prop_basic, 1950:2025, export_path = "monthtest3.nc"; mode = :yearly)
+compute_general_climatology(data_folder_basic, weights_prop_basic, 1950:2025, export_path = "monthtest4.nc"; mode = :yearly)
 
 
 
@@ -121,7 +121,6 @@ function accumulate_data(data_folder, year_range, mode, months, days, var_name)
         for month in months
             month_str = lpad(month, 2, '0')
             files = glob("*$(year)_$(month_str)*.nc", data_folder)
-            if isempty(files) continue end
 
             NCDataset(files[1]) do ds
                 # Capture coordinates once
@@ -129,8 +128,9 @@ function accumulate_data(data_folder, year_range, mode, months, days, var_name)
                     lons, lats = ds["longitude"][:], ds["latitude"][:]
                 end
 
-                # Slice Data
+                # On réccupère le vecteur de date sur le mois
                 times = ds["valid_time"][:]
+                # Test si la variable "days" est vide, si non on réccupère les indices dont le jour correspond.
                 indices = isnothing(days) ? (1:length(times)) : findall(t -> day(t) in days, times)
                 
                 if !isempty(indices)
@@ -204,7 +204,7 @@ function finalize_cube(sums_dict, counts_dict, weights, mode)
 
     weights=weights'
     visual_mask = fill(NaN, size(weights))
-    visual_mask[weights .> 0.0] = 1.0
+    visual_mask[weights .> 0.0] .= 1.0
 
     # Sort keys chronologically
     all_keys = collect(keys(sums_dict))
