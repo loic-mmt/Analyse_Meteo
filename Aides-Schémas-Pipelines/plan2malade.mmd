@@ -1,9 +1,10 @@
-graph TD
+%%{init: {'themeVariables': { 'fontSize': '26px'}, "flowchart": {"nodeSpacing": 60, "rankSpacing": 100, "useMaxWidth": false}}}%%
+graph LR
     %% --- Styles ---
-    classDef python fill:#ffe082,stroke:#ffb300,stroke-width:2px,color:black;
-    classDef julia fill:#ce93d8,stroke:#8e24aa,stroke-width:2px,color:black;
-    classDef data fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:black;
-    classDef dvc fill:#f5f5f5,stroke:#616161,stroke-width:2px,stroke-dasharray: 5 5,color:black;
+    classDef python fill:#ffe082,stroke:#ffb300,stroke-width:3px,color:black;
+    classDef julia fill:#ce93d8,stroke:#8e24aa,stroke-width:3px,color:black;
+    classDef data fill:#e1f5fe,stroke:#0277bd,stroke-width:3px,color:black;
+    classDef dvc fill:#f5f5f5,stroke:#616161,stroke-width:3px,stroke-dasharray: 8 8,color:black;
 
     %% --- External Resources ---
     subgraph External_Resources ["Phase 1: External Inputs"]
@@ -25,16 +26,14 @@ graph TD
         %% Step 2: Masks (Julia)
         Jl_Mask["src/make_masks.jl<br>(Julia ArchGDAL & LibGEOS)"]:::julia
         Mask_Data[/"data/masks/<br>Boolean Mask .nc"/]:::data
-
-        %% Step 3: Static Visualization (Julia)
-
     end
 
     %% --- Final Product (Bonito) ---
     subgraph App_Layer ["Phase 4: Web Application (Julia)"]
-        Jl_App["src/app.jl<br>(Bonito)"]:::julia
         Jl_Visu["src/visu.jl<br>(Julia Plots, GLM, Glob)"]:::julia
+        Jl_App["src/app.jl<br>(Bonito)"]:::julia
     end
+    
     %% --- Connections ---
     
     %% Data Flow
