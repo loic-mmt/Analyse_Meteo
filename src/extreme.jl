@@ -4,7 +4,6 @@ using Statistics
 using Plots
 using Dates
 using DataFrames
-using CSV
 
 # 1. CONFIGURATION ET CHARGEMENT DES DONNÉES
 
