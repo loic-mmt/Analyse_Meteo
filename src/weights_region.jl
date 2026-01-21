@@ -233,6 +233,11 @@ sample_nc = joinpath(@__DIR__, "..", "data", "raw-yearly-combined", "era5_land_h
 shp = joinpath(@__DIR__, "..", "data", "shapefiles", "region.shp")
 out_weights_prefix = "weights_region_"
 
+function sanitize_filename(s::AbstractString)
+    t = replace(s, r"[^\w\-]+" => "_")
+    return strip(t, '_')
+end
+
 # ======== grille NetCDF =========
 
 ds = NCDataset(sample_nc)
@@ -280,17 +285,55 @@ close(ds)
 
 # ======== Lecture du shapefile (régions) + proj lon/lat->CRS shapefile ========
 
-geoms, pj_ll_to_src = ArchGDAL.read(shp) do dataset
+geoms, region_names, pj_ll_to_src = ArchGDAL.read(shp) do dataset
     layer = ArchGDAL.getlayer(dataset, 0) # Prend la couche 0 (première couche du shapefile)
 
     # CRS du shapefile
     srs_src = ArchGDAL.getspatialref(layer)
 
+    # Récupération des noms de régions
+    defn = ArchGDAL.layerdefn(layer)
+    field_names = String[]
+    i = 0
+    while true
+        try
+            fdefn = ArchGDAL.getfielddefn(defn, i)
+            push!(field_names, ArchGDAL.getname(fdefn))
+            i += 1
+        catch
+            break
+        end
+    end
+    length(field_names) < 2 && error("Not enough fields in shapefile to read region names.")
+    name_field = field_names[2]
+
     # Transformation (lon/lat EPSG:4326) -> CRS shapefile
     pj = proj_to_layer_crs(srs_src)
 
-    geoms = layer_feature_geoms(layer)
-    return (geoms, pj)
+    geoms = ArchGDAL.IGeometry[]
+    region_names = String[]
+
+    if isdefined(ArchGDAL, :eachfeature)
+        eachf = getfield(ArchGDAL, :eachfeature)
+        eachf(layer) do feat
+            g = ArchGDAL.getgeom(feat)
+            push!(geoms, ArchGDAL.clone(g))
+            push!(region_names, string(ArchGDAL.getfield(feat, name_field)))
+        end
+    else
+        try
+            for feat in layer
+                g = ArchGDAL.getgeom(feat)
+                push!(geoms, ArchGDAL.clone(g))
+                push!(region_names, string(ArchGDAL.getfield(feat, name_field)))
+            end
+        catch
+            geoms = layer_feature_geoms(layer)
+            region_names = [string(i) for i in 1:length(geoms)]
+        end
+    end
+
+    return (geoms, region_names, pj)
 end
 
 println("Shapefile loaded. Regions: ", length(geoms))
@@ -440,6 +483,8 @@ for (region_idx, geom_src) in enumerate(geoms)
     # ======== Poids finaux : fraction × cos(lat) =========
     weights_lat = cos.(deg2rad.(lats))
     final_weights = weights_frac .* reshape(weights_lat, nlat, 1)
+    weights_frac_out = permutedims(weights_frac, (2, 1))
+    final_weights_out = permutedims(final_weights, (2, 1))
 
     println("weights_frac min/max/mean = ",
             minimum(weights_frac), " / ", maximum(weights_frac), " / ", mean(weights_frac))
@@ -447,7 +492,10 @@ for (region_idx, geom_src) in enumerate(geoms)
             minimum(final_weights), " / ", maximum(final_weights), " / ", mean(final_weights))
 
     # ============ Sauvegarde dans un NetCDF ==============
-    out_weights_nc = "$(out_weights_prefix)$(region_idx).nc"
+    const WEIGHTS_FOLDER = joinpath(@__DIR__, "..", "weights")
+    region_name = region_names[region_idx]
+    region_slug = sanitize_filename(region_name)
+    out_weights_nc = joinpath(WEIGHTS_FOLDER ,"$(out_weights_prefix)$(region_slug).nc")
     isfile(out_weights_nc) && rm(out_weights_nc) # si le fichier existe déjà, on le supprime avant de le recréer
 
     wds = NCDataset(out_weights_nc, "c")
@@ -456,17 +504,19 @@ for (region_idx, geom_src) in enumerate(geoms)
 
     vlat = defVar(wds, lat_name, Float64, (lat_name,))
     vlon = defVar(wds, lon_name, Float64, (lon_name,))
-    v1   = defVar(wds, "weights_frac",  Float64, (lat_name, lon_name))
-    v2   = defVar(wds, "final_weights", Float64, (lat_name, lon_name))
+    v1   = defVar(wds, "weights_frac",  Float64, (lon_name, lat_name))
+    v2   = defVar(wds, "final_weights", Float64, (lon_name, lat_name))
 
     vlat[:] = lats
     vlon[:] = lons
-    v1[:, :] = weights_frac    # `[:, :]` = toute la matrice (toutes les lignes et toutes les colonnes)
-    v2[:, :] = final_weights
+    v1[:, :] = weights_frac_out    # `[:, :]` = toute la matrice (toutes les lignes et toutes les colonnes)
+    v2[:, :] = final_weights_out
 
     wds.attrib["description"] = "Region weights: fraction-in-region (subsample) and final_weights=fraction*cos(lat)"
     wds.attrib["subsample_k"] = string(sub_k)
     wds.attrib["region_index"] = string(region_idx)
+    wds.attrib["region_name"] = region_name
+    wds.attrib["weights_dims"] = "lon,lat"
 
     close(wds)
 

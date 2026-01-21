@@ -1,6 +1,6 @@
 
 		begin
-      f = addfile("/Users/loic/Documents/UGA/Projet_tutore/Analyse_Meteo/data/weights/weights_region_1.nc","r")
+      f = addfile("/Users/loic/Documents/UGA/Projet_tutore/Analyse_Meteo/weights/weights_region_Auvergne-Rhône-Alpes.nc","r")
       print(f)
 		end
     
