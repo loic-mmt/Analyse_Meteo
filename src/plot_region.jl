@@ -21,6 +21,7 @@ function plot_regions(; all::Bool=true, sample_nc::AbstractString=SAMPLE_NC,
 
     ds_temp = NCDataset(sample_nc)
     temp = ds_temp["t2m"][:, :, 1]
+    temp = temp .- 273.15
     close(ds_temp)
 
     weight_var = use_cos ? "final_weights" : "weights_frac"
