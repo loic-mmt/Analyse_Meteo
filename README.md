@@ -1,66 +1,93 @@
-README - Analyse Meteo (ERA5 France)
+# Analyse Météo — ERA5 France
 
-But
-Ce depot contient des scripts Julia et Python pour telecharger des donnees ERA5, calculer des masques geographiques sur la France, agregger des climatologies (mensuelles/annuelles), puis visualiser et analyser des tendances.
+Ce dépôt regroupe des scripts **Julia** et **Python** permettant de :
+- télécharger des données **ERA5** (Copernicus CDS),
+- construire un **masque / poids géographiques** sur la France,
+- agréger des **climatologies** (mensuelles ou annuelles),
+- produire des **visualisations** et analyses de tendance.
 
-Guide rapide (tuto complet)
+---
 
-0) Prerequis
-- Julia + packages du projet: `src/Project.toml` / `src/Manifest.toml`
-- Python 3 avec `cdsapi` (pour le telechargement ERA5)
-- Bibliotheques systeme pour ArchGDAL/LibGEOS/PROJ (selon votre OS)
-- Acces Copernicus CDS + cle API configuree (~/.cdsapirc)
+## Prérequis
 
-1) Installer l'environnement Julia
-Depuis la racine du depot:
-`julia --project=src -e 'using Pkg; Pkg.instantiate()'`
+- **Julia** (avec l’environnement du projet : `src/Project.toml`, `src/Manifest.toml`)
+- **Python 3** + `cdsapi` (téléchargement ERA5)
+- Dépendances système pour `ArchGDAL` / `LibGEOS` / `PROJ` (selon l’OS)
+- Compte **Copernicus CDS** + clé API configurée (`~/.cdsapirc`)
 
-2) Telechargement des donnees ERA5 (Python)
-Le script `src/download.py` telecharge des fichiers NetCDF mensuels:
-- zone: France (incluant la Corse)
-- variable: temperature 2m (t2m)
+---
 
-Dans `src/download.py`, ajuster:
-- `START_YEAR` / `END_YEAR`
-- `OUT_DIR` (par defaut `era5_fr_t2m`)
+## Installation (Julia)
 
-Execution:
-`python src/download.py`
+Depuis la racine du dépôt :
 
-Recommandation:
-- placer le resultat dans `data/raw-yearly-combined/era5_fr_t2m`
-- ou modifier `OUT_DIR` pour ecrire directement dans ce dossier
-
-3) Calcul des poids / masque France (Julia)
-Le script `src/weights.jl` cree une matrice de poids a partir du shapefile France.
-Il lit un fichier ERA5 pour recuperer la grille lon/lat.
-
-Parametres importants (en haut du script):
-- `sample_nc`: un fichier ERA5 local (ex: `data/raw-yearly-combined/era5_fr_t2m/era5_t2m_fr_1950_01.nc`)
-- `shp`: shapefile (par defaut `data/shapefiles/region.shp`)
-- `out_weights_nc`: fichier de sortie (ex: `data/masks/weights_prop_basic.nc`)
-
-Execution:
-`julia --project=src -e 'include("src/weights.jl")'`
-
-Le fichier produit contient:
-- `weights_frac`: fraction de pixel a l'interieur de la France
-- `final_weights`: `weights_frac * cos(lat)` (pondere par l'aire)
-
-Option: creer un masque booleen si besoin.
-Exemple de regle utilisee dans les scripts: `weights .> 0.9` pour un masque 0/1.
-
-4) Agregation climatologique (Julia)
-Le pipeline principal est dans `src/aggregate.jl`:
-- `accumulate_data` lit et accumule les NetCDF sans tout charger en RAM
-- `finalize_cube` calcule les moyennes, applique le masque, convertit en Celsius
-- `save_climatology_netcdf` exporte un NetCDF propre
-- `compute_general_climatology` orchestre tout
-
-Exemple mensuel (moyenne par mois):
-`julia --project=src -q`
-Puis dans le REPL Julia:
+```bash
+julia --project=src -e 'using Pkg; Pkg.instantiate()'
 ```
+
+---
+
+## Téléchargement ERA5 (Python)
+
+Le script `src/download.py` télécharge des fichiers NetCDF mensuels :
+- zone : France (incluant la Corse)
+- variable : température à 2 m (`t2m`)
+
+Paramètres principaux à ajuster dans `src/download.py` :
+- `START_YEAR` / `END_YEAR`
+- `OUT_DIR` (par défaut : `era5_fr_t2m`)
+
+Exécution :
+
+```bash
+python src/download.py
+```
+
+Recommandation : stocker les fichiers dans :
+
+```
+data/raw-yearly-combined/era5_fr_t2m
+```
+
+---
+
+## Masque et poids France (Julia)
+
+Le script `src/weights.jl` génère une matrice de poids à partir d’un shapefile France.
+Il utilise un fichier ERA5 comme référence pour récupérer la grille (lon/lat).
+
+Paramètres clés :
+- `sample_nc` : fichier ERA5 local de référence
+- `shp` : shapefile (par défaut : `data/shapefiles/region.shp`)
+- `out_weights_nc` : fichier NetCDF de sortie
+
+Exécution :
+
+```bash
+julia --project=src -e 'include("src/weights.jl")'
+```
+
+Le NetCDF produit contient :
+- `weights_frac` : fraction du pixel dans la France
+- `final_weights` : `weights_frac * cos(lat)` (pondération aire)
+
+Un masque booléen peut être dérivé si nécessaire (ex. seuil `> 0.9`).
+
+---
+
+## Agrégation climatologique (Julia)
+
+Le pipeline principal est dans `src/aggregate.jl` :
+- lecture incrémentale des NetCDF (évite de charger tout en RAM),
+- application du masque / des poids,
+- conversion Kelvin → Celsius,
+- export NetCDF final.
+
+Exemples :
+
+### Climatologie mensuelle
+
+```julia
 include("src/aggregate.jl")
 
 cube = compute_general_climatology(
@@ -72,8 +99,11 @@ cube = compute_general_climatology(
 )
 ```
 
-Exemple annuel:
-```
+### Climatologie annuelle
+
+```julia
+include("src/aggregate.jl")
+
 cube = compute_general_climatology(
     "data/raw-yearly-combined/era5_fr_t2m",
     weights_bool_basic,
@@ -83,48 +113,67 @@ cube = compute_general_climatology(
 )
 ```
 
-Notes:
-- `weights_bool_basic`, `weights_prop_basic`, etc. sont charges au debut de `src/aggregate.jl`
-- Si ces fichiers n'existent pas, corriger les chemins ou regenerer les poids
-- Les donnees sont supposees etre en Kelvin, conversion en Celsius faite dans le code
+Notes :
+- `weights_bool_basic`, `weights_prop_basic`, etc. sont chargés au début de `src/aggregate.jl`.
+- si les fichiers de poids n’existent pas : corriger les chemins ou régénérer avec `weights.jl`.
 
-5) Visualisation / series temporelles
-Le script `src/visualization.jl` charge les NetCDF agreges et calcule des series:
-- `means_vector_calculation` calcule la temperature moyenne France par pas de temps
-- utilisation de GLM/StatsPlots pour les tendances (voir `src/Original.jl`)
+---
 
-Execution (exemple):
-`julia --project=src -e 'include("src/visualization.jl")'`
+## Visualisation et séries temporelles
 
-6) Cartes, animations et tendances spatiales
-`src/Original.jl` contient des fonctions pour:
-- cartes annuelles, tendances pixel, animation GIF
-- calcul de p-values avec GLM
-Ce fichier est plus experimental mais sert de reference pour reproduire les graphiques.
+Le script `src/visualization.jl` charge les climatologies et construit des séries temporelles France :
+- `means_vector_calculation` : moyenne nationale par pas de temps
+- tendances via `GLM` / `StatsPlots`
 
-7) Option performance: format JLD2
-`src/JLD2 (in progress).jl` propose une conversion des NetCDF vers un fichier JLD2 pour accelerer les calculs.
-Les chemins sont actuellement hardcodes (a adapter). Utilisation typique:
+Exécution :
+
+```bash
+julia --project=src -e 'include("src/visualization.jl")'
 ```
+
+---
+
+## Cartes, animations et tendances spatiales
+
+`src/Original.jl` contient des fonctions de référence (plus exploratoires) :
+- cartes annuelles,
+- tendances par pixel,
+- animation GIF,
+- p-values via `GLM`.
+
+---
+
+## Option performance : format JLD2
+
+`src/JLD2 (in progress).jl` propose une conversion NetCDF → JLD2 pour accélérer les traitements.
+Les chemins sont actuellement à adapter.
+
+Exemple :
+
+```julia
 include("src/JLD2 (in progress).jl")
 convert_to_fast_format("data/raw-yearly-combined/era5_fr_t2m", "data/fast/era5.jld2")
 ```
 
-Structure du dossier (attendue)
-- `data/raw-yearly-combined/era5_fr_t2m/*.nc` -> fichiers ERA5 mensuels
-- `data/masks/*.nc` -> masques/poids France
-- `data/processed-means/*.nc` -> climatologies agreges
-- `data/shapefiles/region.shp` -> frontieres France
-- `src/*.jl` -> scripts Julia
+---
 
-Depannage
-- Si `ArchGDAL` / `LibGEOS` echoue: verifier l'installation GDAL/GEOS/PROJ sur votre systeme.
-- Si un script pointe vers `/mnt/...` ou `/home/...`: modifier les chemins en haut du fichier.
-- Si la variable NetCDF n'est pas `t2m`: changer `variable_name` dans les fonctions.
+## Structure attendue
 
-Rappel: les scripts sont modulaires
-Vous pouvez executer uniquement ce qui vous interesse:
-- telecharger
-- construire les poids
-- agregger en NetCDF
-- visualiser / analyser
+```
+data/
+  raw-yearly-combined/era5_fr_t2m/   # ERA5 mensuel (NetCDF)
+  masks/                             # poids/masques France
+  processed-means/                   # climatologies agrégées
+  shapefiles/region.shp              # frontières France
+src/
+  *.jl                               # scripts Julia
+  download.py                        # téléchargement ERA5
+```
+
+---
+
+## Dépannage
+
+- Échecs `ArchGDAL` / `LibGEOS` : vérifier l’installation **GDAL/GEOS/PROJ** sur la machine.
+- Chemins codés en dur (`/mnt/...`, `/home/...`) : ajuster en tête de script.
+- Variable NetCDF différente de `t2m` : modifier `variable_name` dans les fonctions.
