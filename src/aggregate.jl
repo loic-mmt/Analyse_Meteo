@@ -34,9 +34,6 @@ close(ds_p_b)
 close(ds_b_b)
 close(ds_b_p)
 
-compute_general_climatology(data_folder_basic, weights_prop_basic, 1950:2025, export_path = "monthtest4.nc"; mode = :yearly)
-
-
 
 
 """
@@ -65,15 +62,27 @@ function compute_general_climatology(
     weights::Matrix{Float64}, 
     year_range; 
     mode::Symbol=:total, 
-    selected_months::Vector{Int}=collect(1:12), 
+    selected_months=collect(1:12), 
     selected_days=nothing, 
+    selected_hours=0:23,
     variable_name="t2m",
     export_path=nothing
-)
+)    
+
+    # Standardization of the month/year to vector for the loops
+    if year_range isa Integer
+        year_range = [year_range]
+    end
+
+    if selected_months isa Integer
+        selected_months = [selected_months]
+    end
+
     # 1. Accumulate Raw Data
     println("Step 1: Accumulating data...")
+    # Pass selected_hours to the function
     (sums, counts, lons, lats) = accumulate_data(
-        data_folder, year_range, mode, selected_months, selected_days, variable_name)
+        data_folder, year_range, mode, selected_months, selected_days, selected_hours, variable_name)
 
     # 2. Compute Means & Cube 
     println("Step 2: Computing means...")
@@ -111,8 +120,7 @@ Arguments :
 Retourne un tuple :
 - `(sums_dict, counts_dict, lons, lats)`
 """
-
-function accumulate_data(data_folder, year_range, mode, months, days, var_name)
+function accumulate_data(data_folder, year_range, mode, months, days, hours, var_name)
     sums_dict = Dict{Any, Matrix{Float64}}()
     counts_dict = Dict{Any, Matrix{Int}}()
     lons, lats = nothing, nothing
@@ -121,35 +129,48 @@ function accumulate_data(data_folder, year_range, mode, months, days, var_name)
         for month in months
             month_str = lpad(month, 2, '0')
             files = glob("*$(year)_$(month_str)*.nc", data_folder)
+            
+            # Check if file exists to avoid crash
+            if isempty(files)
+                continue
+            end
 
             NCDataset(files[1]) do ds
-                # Capture coordinates once
+                                # Capture coordinates once
                 if isnothing(lons)
                     lons, lats = ds["longitude"][:], ds["latitude"][:]
                 end
-
                 # On réccupère le vecteur de date sur le mois
                 times = ds["valid_time"][:]
-                # Test si la variable "days" est vide, si non on réccupère les indices dont le jour correspond.
-                indices = isnothing(days) ? (1:length(times)) : findall(t -> day(t) in days, times)
+
+                ### UPDATED: Robust filtering for Days AND Hours
+                # We select index 'i' if:
+                # 1. The day is in 'days' (or days is nothing)
+                # 2. AND the hour is in 'hours'
+                indices = findall(t -> 
+                    (isnothing(days) || day(t) in days) && 
+                    (hour(t) in hours), 
+                    times
+                )
                 
                 if !isempty(indices)
+                    # Load only specific time steps
                     data_slice = ds[var_name][:, :, indices]
                     
                     for t in 1:length(indices)
-                        # Determine Key
                         time_val = times[indices[t]]
+                        
+                        # Get key based on new logic (including daily)
                         key = get_binning_key(mode, year, month, time_val)
-
-                        # Init Dictionary if needed
+                        # Test si la variable "days" est vide, si non on réccupère les indices dont le jour correspond.
                         if !haskey(sums_dict, key)
                             dims = size(data_slice)[1:2]
                             sums_dict[key] = zeros(Float64, dims)
                             counts_dict[key] = zeros(Int, dims)
                         end
 
-                        # Accumulate
                         frame = data_slice[:, :, t]
+                        # Handling Missing/NaN
                         valid = .!ismissing.(frame) .& .!isnan.(frame)
                         if any(valid)
                             sums_dict[key][valid] .+= frame[valid]
@@ -159,7 +180,7 @@ function accumulate_data(data_folder, year_range, mode, months, days, var_name)
                 end
             end
         end
-        print("\rProcessed Year $year   ")
+        print("\rProcessed Year $year    ")
     end
     println("")
     return sums_dict, counts_dict, lons, lats
@@ -167,10 +188,13 @@ end
 
 
 
+
 # Function d'aide pour l'utilisation des clées
 function get_binning_key(mode, year, month, time_val)
     if mode == :monthly
         return Date(year, month, 1)
+    elseif mode == :daily
+        return Date(year, month, day(time_val))
     elseif mode == :yearly
         return year
     else
@@ -259,18 +283,19 @@ Arguments :
 function save_climatology_netcdf(path, matrix, times, lons, lats, mode)
     
     NCDataset(path, "c") do ds
-        # Dimensions
         defDim(ds, "longitude", length(lons))
         defDim(ds, "latitude", length(lats))
+        
+        # Define time dimension name
         time_name = (mode == :yearly) ? "year" : "time"
         defDim(ds, time_name, length(times))
 
-        # Variables
         defVar(ds, "longitude", Float64, ("longitude",))[:] = lons
         defVar(ds, "latitude", Float64, ("latitude",))[:] = lats
         
-        # Time Variable
-        if mode == :monthly
+        # Write Time Variable
+        if mode == :monthly || mode == :daily ### UPDATED
+            # Both monthly and daily use Date objects
             defVar(ds, "time", times, ("time",))
         elseif mode == :yearly
             defVar(ds, "year", Int32, ("year",))[:] = times
@@ -278,12 +303,12 @@ function save_climatology_netcdf(path, matrix, times, lons, lats, mode)
             defVar(ds, "time", [0.0], ("time",))
         end
 
-        # Data
         v_temp = defVar(ds, "temperature", Float64, ("longitude", "latitude", time_name), attrib = [
             "_FillValue" => NaN,
-            "units" => "Celsius"
-        ])
+            "units" => "Celsius"])
         v_temp[:,:,:] = matrix
     end
 end
 
+
+matrice  = compute_general_climatology(data_folder_basic, weights_prop_basic, 2025; mode = :daily, selected_hours=18, selected_months=12)
