@@ -77,7 +77,12 @@ function compute_general_climatology(
     if selected_months isa Integer
         selected_months = [selected_months]
     end
-
+    if selected_hours isa Interger
+        selected_hours = [selected_hours]
+    end
+    if selected_days isa Integer
+        selected_days = [selected_days]
+    end
     # 1. Accumulate Raw Data
     println("Step 1: Accumulating data...")
     # Pass selected_hours to the function
