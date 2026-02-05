@@ -39,6 +39,16 @@ weights_prop_basic = ds_p_b["final_weights"][:,:]
 weights_bool_basic = ds_b_b["mask"][:,:]
 weights_bool_precise = ds_b_p["mask"][:,:]
 
+
+test_file = "output/climatology_yearly.nc"
+testnc = NCDataset(test_file)
+ttt = testnc["t2m"][:,:,:]
+close(testnc)
+
+ari =NCDataset("output/climatology_yearly_original.nc")
+arfinal = ari["temperature"][:,:,:]
+
+
 # Fermeture des NCdataset pour éviter trop de poids sur la RAM
 close(ds_p_b)
 #close(ds_p_p)
@@ -112,7 +122,8 @@ vect_test = means_vector_calculation(test_matrix, weights_prop_basic)
 d_test = NCDataset("monthtest4.nc")
 test_matrix = d_test["temperature"][:,:,:]
 
-
+CDOtest = means_vector_calculation(ttt, weights_prop_basic)
+aritest = means_vector_calculation(arfinal, weights_prop_basic)
 
 """
     trends_climate(means, years_range; trend=false, cutting=0)
@@ -182,6 +193,7 @@ function trends_climate(means::Vector{Float64}, years_range; trend = false, cutt
     return p
 end
 trends_climate(vect_test, 1950:2025, trend = true)
+trends_climate(CDOtest, 1950:2025, trend = true)
 
 
 

@@ -5,3 +5,4 @@ data/
 *.7z
 *.nc
 visualisation/analyse_t2m.html
+/output
