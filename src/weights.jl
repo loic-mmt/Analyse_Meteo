@@ -229,9 +229,9 @@ end
 
 # ======== Inputs =========
 
-sample_nc = "../tests/era5_t2m_2025_01-02_fr.nc"     # un seul fichier pour la grille
-shp = "../data/shapefiles/region.shp"
-out_weights_nc = "weights_france_final.nc"
+sample_nc = "data/raw_monthly_combined/precise/era5_land_fr_1950_01.nc"     # un seul fichier pour la grille
+shp = "data/shapefiles/region.shp"
+out_weights_nc = "data/masks/precise/weights_france.nc"
 
 # ======== grille NetCDF =========
 
