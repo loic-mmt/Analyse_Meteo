@@ -39,6 +39,16 @@ weights_prop_basic = ds_p_b["final_weights"][:,:]
 weights_bool_basic = ds_b_b["mask"][:,:]
 weights_bool_precise = ds_b_p["mask"][:,:]
 
+
+test_file = "output/climatology_yearly.nc"
+testnc = NCDataset(test_file)
+ttt = testnc["t2m"][:,:,:]
+close(testnc)
+
+ari =NCDataset("output/climatology_yearly_original.nc")
+arfinal = ari["temperature"][:,:,:]
+
+
 # Fermeture des NCdataset pour éviter trop de poids sur la RAM
 close(ds_p_b)
 #close(ds_p_p)
@@ -112,7 +122,10 @@ vect_test = means_vector_calculation(test_matrix, weights_prop_basic)
 d_test = NCDataset("monthtest4.nc")
 test_matrix = d_test["temperature"][:,:,:]
 
+CDOtest = means_vector_calculation(ttt, weights_prop_basic)
+aritest = means_vector_calculation(arfinal, weights_prop_basic)
 
+trends_climate(vect_years_basic, 1950:2025)
 
 """
     trends_climate(means, years_range; trend=false, cutting=0)
@@ -124,16 +137,15 @@ une régression linéaire globale ou segmentée (avant/après une date de coupur
 
 # Arguments
 - `means::Vector{Float64}` : Le vecteur des températures moyennes (sortie de `means_vector_calculation`).
-- `years_range` : La plage d'années correspondante (ex: `1950:2025`).
 - `trend::Bool` (keyword) : Si `true`, calcule et affiche les droites de régression.
 - `cutting::Int` (keyword) : Année de rupture pour calculer deux tendances distinctes (ex: 1980).
 
 # Retourne
 - Un objet `Plot` contenant le graphique.
 """
-function trends_climate(means::Vector{Float64}, years_range; trend = false, cutting=0)
+function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing)
     # Creation du dataframe pour les models et transfer en vecteur des années
-    years_vec = Vector(years_range)
+    years_vec = Vector(1:lenght(means))
     df = DataFrame(Year = years_vec, Temp = means)
 
     # plot de base (scatter points)
@@ -158,7 +170,7 @@ function trends_climate(means::Vector{Float64}, years_range; trend = false, cutt
             label = "Global trend, slope = $slope_global ± $confiance_global", color = :purple, linewidth=5)
 
         # boucle if si cutting est présent
-        if cutting > minimum(years_range) && cutting < maximum(years_range)
+        if cutting != Nothing
         
             # Tri des éléments plus petits que cutting, modélisation et plot
             df1 = filter(row -> row.Year <= cutting, df)
@@ -182,6 +194,7 @@ function trends_climate(means::Vector{Float64}, years_range; trend = false, cutt
     return p
 end
 trends_climate(vect_test, 1950:2025, trend = true)
+trends_climate(CDOtest, 1950:2025, trend = true)
 
 
 
@@ -335,3 +348,58 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     println("Saved animation to $filename")
 end
 
+
+"""
+    animate_climatology(data_3d, weights, valid_times; filename="...")
+
+Génère une animation GIF montrant l'évolution des cartes de température pas de temps par pas de temps.
+
+Applique un masque binaire basé sur les poids (terre/mer) pour ne visualiser que les
+zones d'intérêt.
+
+# Arguments
+- `data_3d` : Cube de données [Lon, Lat, Time].
+- `weights` : Matrice de masque (seuil à 0.5).
+- `valid_times` : Vecteur correspondant à la dimension temporelle (Années ou Dates).
+- `filename` : Nom du fichier de sortie (défaut "temperature_evolution.gif").
+"""
+function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights, valid_times::AbstractVector; filename="temperature_evolution.gif")
+    
+    println("Generating animation...")
+
+    # 1. Determine fixed color limits for the whole period to allow comparison
+    valid_data = filter(!ismissing, data_3d)
+    if isempty(valid_data)
+        println("Error: Data contains only NaNs.")
+        return
+    end
+    min_val, max_val = minimum(valid_data), maximum(valid_data)
+    
+    # 2. Create the Animation object
+    anim = @animate for i in 1:length(valid_times)
+        # Fix: Use 'current_time' instead of 'year' to be generic (works for Date or Int)
+        current_time = valid_times[i]
+        
+        # Extract the 2D map for this time step
+        # Transpose (') to switch from [Lon, Lat] (Julia) to [x, y] (Plots.jl)
+        current_map = data_3d[:, :, i]'
+        
+        # Apply visual mask
+        current_map[weights .< 0.5] .= NaN
+
+        heatmap(current_map,
+            title = "Mean Temperature: $current_time", # Displays Year (Int) or Date (yyyy-mm-dd) automatically
+            clims = (min_val, max_val),
+            c = :thermal,   # Color palette
+            xlabel = "Longitude",
+            ylabel = "Latitude",
+            aspect_ratio = :equal,
+            right_margin = 5Plots.mm,
+            yflip = true    # Orient North correctly
+        )
+    end
+
+    # 3. Save the GIF
+    gif(anim, filename, fps = 5) 
+    println("✅ Saved animation to $filename")
+end

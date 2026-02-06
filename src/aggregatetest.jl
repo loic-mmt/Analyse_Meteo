@@ -46,7 +46,7 @@ Elle exécute séquentiellement :
 3. L'exportation optionnelle vers un nouveau fichier NetCDF.
 
 Arguments :
-- `data_folder` : Chemin vers le dossier des fichiers ERA5 bruts.
+- `global_file_path` : Chemin vers le fichier des données ERA5 bruts.
 - `weights` : Matrice de poids spatiaux (utilisée pour créer le masque visuel).
 - `year_range` : Plage d'années à traiter (ex: 1950:2020).
 - `mode` : Niveau d'agrégation (:monthly, :yearly, ou :total).
@@ -58,7 +58,7 @@ Retourne :
 - `final_cube` : Une matrice 3D [Lon, Lat, Temps] contenant les températures moyennes en Celsius.
 """
 function compute_general_climatology(
-    data_folder::String, 
+    global_file_path::String, 
     weights::Matrix{Float64}, 
     year_range; 
     mode::Symbol=:total, 
@@ -87,7 +87,7 @@ function compute_general_climatology(
     println("Step 1: Accumulating data...")
     # Pass selected_hours to the function
     (sums, counts, lons, lats) = accumulate_data(
-        data_folder, year_range, mode, selected_months, selected_days, selected_hours, variable_name)
+        global_file_path, year_range, mode, selected_months, selected_days, selected_hours, variable_name)
 
     # 2. Compute Means & Cube 
     println("Step 2: Computing means...")
@@ -116,7 +116,7 @@ Fonctionnement :
 - Elle compte le nombre de pixels valides dans `counts_dict`.
 
 Arguments :
-- `data_folder` : Dossier source.
+- `global_file_path` : Fichier source.
 - `year_range` : Années à parcourir.
 - `mode` : Définit la logique de création des clés (:monthly, :yearly, :total).
 - `months`/`days` : Filtres temporels.
@@ -125,73 +125,106 @@ Arguments :
 Retourne un tuple :
 - `(sums_dict, counts_dict, lons, lats)`
 """
-function accumulate_data(data_folder, year_range, mode, months, days, hours, var_name)
-    sums_dict = Dict{Any, Matrix{Float64}}()
-    counts_dict = Dict{Any, Matrix{Int}}()
+function accumulate_data(global_file_path, year_range, mode, months, days, hours, var_name)
+    # 1. Setup Thread-Safe Storage
+    n_threads = Threads.nthreads()
+    println("🚀 Starting Multithreaded Processing with $n_threads threads...")
+    
+    # Each thread gets its own dictionary to avoid conflicts (Race Conditions)
+    thread_sums = [Dict{Any, Matrix{Float64}}() for _ in 1:n_threads]
+    thread_counts = [Dict{Any, Matrix{Int}}() for _ in 1:n_threads]
+    
+    # 2. Get Metadata (Single Read)
+    # We read dimensions once from the main thread
     lons, lats = nothing, nothing
+    all_times = nothing
+    
+    NCDataset(global_file_path, "r") do ds
+        time_name = haskey(ds, "valid_time") ? "valid_time" : "time"
+        all_times = ds[time_name][:]
+        lons = ds["longitude"][:]
+        lats = ds["latitude"][:]
+    end
 
-    for year in year_range
-        for month in months
-            month_str = lpad(month, 2, '0')
-            files = glob("*$(year)_$(month_str)*.nc", data_folder)
+    # 3. PARALLEL LOOP
+    # Threads.@threads distributes the years among available cores 
+    Threads.@threads for year in year_range
+        tid = Threads.threadid()
+        
+        # Each thread opens its own file handle. 
+        # This is safe for read-only and allows parallel decompression.
+        NCDataset(global_file_path, "r") do ds
             
-            # Check if file exists to avoid crash
-            if isempty(files)
-                continue
-            end
+            # --- Fast Range Finder ---
+            year_indices = findall(t -> Dates.year(t) == year, all_times)
+            if isempty(year_indices) return end # Skip if empty
 
-            NCDataset(files[1]) do ds
-                                # Capture coordinates once
-                if isnothing(lons)
-                    lons, lats = ds["longitude"][:], ds["latitude"][:]
-                end
-                # On réccupère le vecteur de date sur le mois
-                times = ds["valid_time"][:]
+            range_start = minimum(year_indices)
+            range_end = maximum(year_indices)
+            
+            # --- BULK READ (Decompression happens here) ---
+            # Reading 1 year at once (~200MB) is efficient
+            raw_year_data = ds[var_name][:, :, range_start:range_end]
+            times_in_block = all_times[range_start:range_end]
 
-                ### UPDATED: Robust filtering for Days AND Hours
-                # We select index 'i' if:
-                # 1. The day is in 'days' (or days is nothing)
-                # 2. AND the hour is in 'hours'
-                indices = findall(t -> 
-                    (isnothing(days) || day(t) in days) && 
-                    (hour(t) in hours), 
-                    times
-                )
+            # --- Filter & Accumulate in RAM ---
+            # We find indices relative to the loaded block (1 to 8760)
+            relative_indices = findall(t -> 
+                (Dates.month(t) in months) && 
+                (isnothing(days) || Dates.day(t) in days) && 
+                (isnothing(hours) || Dates.hour(t) in hours), 
+                times_in_block
+            )
+
+            for i in relative_indices
+                time_val = times_in_block[i]
+                key = get_binning_key(mode, year, Dates.month(time_val), time_val)
+
+                # Get the slice (View)
+                frame = view(raw_year_data, :, :, i)
                 
-                if !isempty(indices)
-                    # Load only specific time steps
-                    data_slice = ds[var_name][:, :, indices]
-                    
-                    for t in 1:length(indices)
-                        time_val = times[indices[t]]
-                        
-                        # Get key based on new logic (including daily)
-                        key = get_binning_key(mode, year, month, time_val)
-                        # Test si la variable "days" est vide, si non on réccupère les indices dont le jour correspond.
-                        if !haskey(sums_dict, key)
-                            dims = size(data_slice)[1:2]
-                            sums_dict[key] = zeros(Float64, dims)
-                            counts_dict[key] = zeros(Int, dims)
-                        end
+                # Check Dictionary for THIS thread
+                if !haskey(thread_sums[tid], key)
+                    dims = size(frame)
+                    thread_sums[tid][key] = zeros(Float64, dims)
+                    thread_counts[tid][key] = zeros(Int, dims)
+                end
 
-                        frame = data_slice[:, :, t]
-                        # Handling Missing/NaN
-                        valid = .!ismissing.(frame) .& .!isnan.(frame)
-                        if any(valid)
-                            sums_dict[key][valid] .+= frame[valid]
-                            counts_dict[key][valid] .+= 1
-                        end
-                    end
+                # Vectorized Addition (Fast & Stable)
+                valid_mask = .!ismissing.(frame) .& .!isnan.(frame)
+                
+                if any(valid_mask)
+                    thread_sums[tid][key][valid_mask] .+= frame[valid_mask]
+                    thread_counts[tid][key][valid_mask] .+= 1
                 end
             end
         end
-        print("\rProcessed Year $year    ")
+        # Print progress (Note: printing from threads can be messy, but useful)
+        print(".") 
     end
-    println("")
-    return sums_dict, counts_dict, lons, lats
+    println("\n✅ Parallel processing complete. Merging results...")
+
+    # 4. Merge results from all threads
+    final_sums = merge_thread_dicts(thread_sums)
+    final_counts = merge_thread_dicts(thread_counts)
+
+    return final_sums, final_counts, lons, lats
 end
 
-
+# Helper to merge results from different threads
+function merge_thread_dicts(dicts_list)
+    merged = Dict{Any, Matrix{Float64}}()
+    for d in dicts_list
+        for (k, v) in d
+            if haskey(merged, k)
+                merged[k] .+= v
+            else
+                merged[k] = copy(v)
+            end
+        end
+    end
+    return merged
+end
 
 
 # Function d'aide pour l'utilisation des clées
@@ -316,6 +349,4 @@ function save_climatology_netcdf(path, matrix, times, lons, lats, mode)
 end
 
 
-matrice  = compute_general_climatology(data_folder_basic, weights_prop_basic, 1950:2025; mode = :yearly, export_path= "output/climatology_yearly_original.nc")
-
-m = compute_general_climatology(data_folder_basic, weights_prop_basic, 2000; mode = :hourly, selected_months=01, selected_days= 01, selected_hours=12)
+matrice  = compute_general_climatology("src/era5_global_1950_2025_basic.nc", weights_prop_basic, 1950:2025; mode = :yearly)
