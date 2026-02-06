@@ -6,5 +6,5 @@ data/
 *.nc
 visualisation/analyse_t2m.html
 /output
-/demo/plot/ex3_animation.gif.DS_Store
+demo/plot/ex3_animation.gif.DS_Store
 demo/plot/*.gif
