@@ -9,6 +9,14 @@ using Base.Threads
 using RollingFunctions # Pour la création simple et rapide de vecteurs pondérés -> courbes pondérés
 
 
+function save_plot(plot_obj, plot_file)
+    isfile(plot_file) && rm(plot_file)
+    savefig(plot_obj, plot_file)
+end
+
+
+
+
 
 """
     compute_general_climatology(data_folder, weights, year_range; mode, ...)
