@@ -3,14 +3,6 @@ include("function2charge.jl")
 # Chargement des variables de base :
 include("dataset2load.jl")
 
-# Création du dossier de sortie pour les plots
-plot_dir = joinpath(@__DIR__, "plot")
-isdir(plot_dir) || mkpath(plot_dir)
-
-function save_plot(plot_obj, plot_file)
-    isfile(plot_file) && rm(plot_file)
-    savefig(plot_obj, plot_file)
-end
 
 
 

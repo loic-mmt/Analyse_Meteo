@@ -15,3 +15,7 @@ weight_prop_basic = ds_p_b["final_weights"][:,:]
 # Fermeture des NCdataset pour éviter trop de poids sur la RAM
 close(ds_p_b)
 #close(ds_p_p)
+
+# Création du dossier de sortie pour les plots
+plot_dir = joinpath(@__DIR__, "plot")
+isdir(plot_dir) || mkpath(plot_dir)
