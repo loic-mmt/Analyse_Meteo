@@ -26,4 +26,4 @@ serie.plot(color='red')
 plt.title("3 & 4. Série Temporelle 2000 (Moyenne 9x9)")
 plt.savefig("3_serie.png")
 
-print("Les 3 images (1_carte.png, 2_moyenne.png, 3_serie.png) sont prêtes !")
+print("Les 3 images (1_carte.png, 2_moyenne.png, 3_serie.png) sont créer")
