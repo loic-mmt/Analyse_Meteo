@@ -13,4 +13,4 @@ ds = xr.Dataset(
     coords={"time": times, "lat": lats, "lon": lons}
 )
 ds.to_netcdf("data_2000.nc")
-print("Fichier data_2000.nc généré dans le dossier test.")
+print("Fichier data_2000.nc généré dans le dossier.")
