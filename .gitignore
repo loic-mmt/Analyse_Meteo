@@ -5,7 +5,7 @@ data/
 *.7z
 *.nc
 visualisation/analyse_t2m.html
-/output
+demo/output
 demo/plot/ex3_animation.gif.DS_Store
 demo/plot/*.gif
 *.nc
