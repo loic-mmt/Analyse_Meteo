@@ -2,7 +2,7 @@
 data_folder_precise = "data/raw_monthly_combined/precise"
 data_folder_basic ="data/raw_monthly_combined/basic"
 file_weight_prop_basic = "data/masks/weights_prop_basic.nc"
-file_weight_prop_precise = "data/masks/weights_prop_precise.nc"
+file_weight_prop_precise = "data/masks/precise/weights_france.nc"
 
 # Importation des poids
 ds_p_b = NCDataset(file_weight_prop_basic)
