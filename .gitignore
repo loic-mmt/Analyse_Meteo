@@ -9,3 +9,4 @@ demo/output
 demo/plot/ex3_animation.gif.DS_Store
 demo/plot/*.gif
 *.nc
+demo_canada/plot/ex3_animation.gif
