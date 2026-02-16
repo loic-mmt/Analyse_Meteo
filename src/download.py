@@ -26,7 +26,7 @@ DAYS = [f"{d:02d}" for d in range(1, 32)]  # CDS gère les jours inexistants sel
 TIMES = [f"{h:02d}:00" for h in range(24)]
 
 # 4) Dossier de sortie
-OUT_DIR = Path("era5_ca_t2m")
+OUT_DIR = Path("era5_land_hourly")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
