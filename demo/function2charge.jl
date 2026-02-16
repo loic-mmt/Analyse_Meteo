@@ -598,7 +598,8 @@ function vizumap(data_2d, weights)
         return
     end
     current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
-    current_map[weights .<0.5] .= NaN
+    current_map[weights .<0.0] .= NaN
+    #current_map[weights .<0.5] .= NaN
     min_val, max_val = minimum(valid_data), maximum(valid_data)
     heatmap(current_map,
             title = "Temperature",
