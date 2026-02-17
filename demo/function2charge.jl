@@ -45,7 +45,7 @@ Exporte :
 """
 function compute_general_climatology(
     data_folder::String, 
-    weights::Matrix{Float64}, 
+    weights_file::String, 
     year_range; 
     mode::Symbol=:total, 
     selected_months=collect(1:12), 
@@ -69,6 +69,9 @@ function compute_general_climatology(
     if selected_days isa Integer
         selected_days = [selected_days]
     end
+    ds=NCDataset(weights_file)
+    weights=ds["final_weights"][:,:]
+    close(ds)
     # 1. Accumulate Raw Data
     println("Step 1: Accumulating data...")
     # Pass selected_hours to the function
@@ -336,12 +339,15 @@ en ajustant la somme des poids dynamiquement.
 """
 function means_vector_calculation(
     data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, 
-    weights::Matrix{Float64}
+    weights_file::String
 )
     # Initialisation du vecteur
     temp_means = Float64[]
 
     # Pour avoir la même taille (latxlon)
+    ds=NCDataset(weights_file)
+    weights=ds["final_weights"][:,:]
+    close(ds)
     weights = weights'
 
 
@@ -463,8 +469,11 @@ en excluant les zones masquées par les poids (ex: océans).
 - `slope_grid::Matrix` : Carte des pentes (coefficients directeurs).
 - `p_value_grid::Matrix` : Carte des p-values associées (significativité statistique).
 """
-function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights)
+function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file)
 
+    ds= NCDataset(weights_file)
+    weights=ds["weights_frac"][:,:]
+    close(ds)
     n_lon, n_lat, n_time = size(data_3d)
     
     # Initialize grids
@@ -550,10 +559,12 @@ zones d'intérêt. L'échelle de couleur est fixée globalement pour permettre l
 - `valid_years` : Vecteur des années correspondant à la dimension temporelle.
 - `filename` : Nom du fichier de sortie (défaut "temperature_evolution.gif").
 """
-function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights; filename="temperature_evolution.gif")
+function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif")
     
     println("Generating animation...")
 
+    ds = NCDataset(weights_file)
+    weights=ds[weights_frac][:,:]
     # 1. Determine fixed color limits for the whole period
     # We ignore NaNs so they don't break the min/max calculation
     valid_data = filter(!ismissing, data_3d)
@@ -591,15 +602,17 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
 end
 
 
-function vizumap(data_2d, weights)
+function vizumap(data_2d, weights_file)
+    ds = NCDataset(weights_file)
+    weights = ds["weights_frac"][:,:]
+    close(ds)
     valid_data = filter(!ismissing, data_2d)
     if isempty(valid_data)
         println("Error: Data contains only NaNs.")
         return
     end
     current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
-    current_map[weights .<0.0] .= NaN
-    #current_map[weights .<0.5] .= NaN
+    current_map[weights .<0.5] .= NaN
     min_val, max_val = minimum(valid_data), maximum(valid_data)
     heatmap(current_map,
             title = "Temperature",
