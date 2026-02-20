@@ -12,8 +12,8 @@ AREA_CA = [84.0, -142.0, 41.0, -52.0]
 GRID = [0.1, 0.1] 
 
 # 3) Période à télécharger
-START_YEAR = 1952
-END_YEAR = 1965
+START_YEAR = 2001
+END_YEAR = 2025
 YEARS = list(range(START_YEAR, END_YEAR + 1))
 MONTHS = list(range(1, 13))
 # Helper for all days in a month (1-31)
