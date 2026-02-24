@@ -14,6 +14,29 @@ function save_plot(plot_obj, plot_file)
     savefig(plot_obj, plot_file)
 end
 
+function country_mask_for_map(weights::AbstractMatrix{<:Real}, target_size::Tuple{Int, Int})
+    mask = weights .> 0.0
+    if size(mask) == target_size
+        return mask
+    end
+    mask_t = permutedims(mask)
+    if size(mask_t) == target_size
+        return mask_t
+    end
+    error("Incompatible sizes between weights $(size(weights)) and map $(target_size).")
+end
+
+function add_country_outline!(p, mask::AbstractMatrix{Bool}; linecolor=:black, linewidth=1.2)
+    contour!(
+        p,
+        Float64.(mask);
+        levels=[0.5],
+        c=linecolor,
+        linewidth=linewidth,
+        label=false
+    )
+    return p
+end
 
 
 
@@ -525,7 +548,7 @@ Les zones où p > `p_value` sont masquées (NaN) et n'apparaissent pas sur la ca
 - `p_map` : Matrice des p-values correspondantes.
 - `p_value` : Seuil de significativité (défaut 0.05 pour 95% de confiance).
 """
-function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05)
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing)
 
     # 2. Filter: Keep only significant trends (95% confidence)
     # We set non-significant pixels to NaN so they don't show up
@@ -535,7 +558,7 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
     # 3. Plot
     limit = maximum(abs.(filter(!isnan, sig_slope_map)))
     print(limit)
-    heatmap(sig_slope_map', 
+    p = heatmap(sig_slope_map', 
         title = "Significant Warming Trends, p-value= $p_value",
         c = :balance,
         #clims = (-limit, limit),
@@ -543,6 +566,14 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
         yflip = true,
         aspect_ratio = :equal
     )
+    if !isnothing(weights_file)
+        ds = NCDataset(weights_file)
+        weights = ds["weights_frac"][:, :]
+        close(ds)
+        mask = country_mask_for_map(weights, size(sig_slope_map'))
+        add_country_outline!(p, mask)
+    end
+    return p
 end
 
 """
@@ -564,7 +595,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     println("Generating animation...")
 
     ds = NCDataset(weights_file)
-    weights=ds[weights_frac][:,:]
+    weights = ds["weights_frac"][:, :]
+    close(ds)
+    mask = country_mask_for_map(weights, size(data_3d[:, :, 1]'))
     # 1. Determine fixed color limits for the whole period
     # We ignore NaNs so they don't break the min/max calculation
     valid_data = filter(!ismissing, data_3d)
@@ -581,9 +614,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
         # Transpose (') is usually needed because Julia arrays are Col-Major
         # but heatmap expects [x, y]. 
         current_map = data_3d[:, :, i]'
-        current_map[weights .<0.5] .= NaN
+        current_map[.!mask] .= NaN
 
-        heatmap(current_map,
+        p = heatmap(current_map,
             title = "Mean Temperature: $i",
             clims = (min_val, max_val),
             c = :thermal,   # Color palette
@@ -593,6 +626,8 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
             right_margin = 5Plots.mm,
             yflip = true    # Give space for the colorbar
         )
+        add_country_outline!(p, mask)
+        p
     end
 
     # 3. Save the GIF
@@ -612,9 +647,10 @@ function vizumap(data_2d, weights_file)
         return
     end
     current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
-    current_map[weights .<0.5] .= NaN
+    mask = country_mask_for_map(weights, size(current_map))
+    current_map[.!mask] .= NaN
     min_val, max_val = minimum(valid_data), maximum(valid_data)
-    heatmap(current_map,
+    p = heatmap(current_map,
             title = "Temperature",
             clims = (min_val, max_val),
             c = :thermal,   # Color palette
@@ -623,5 +659,6 @@ function vizumap(data_2d, weights_file)
             aspect_ratio = :equal,
             right_margin = 5Plots.mm,
             yflip = true)    # Give space for the colorbar
+    add_country_outline!(p, mask)
+    return p
 end
-

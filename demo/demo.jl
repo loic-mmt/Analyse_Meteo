@@ -44,10 +44,10 @@ p4 = trends_climate(vector4, window=5)
 save_plot(p4, joinpath(plot_dir, "ex4_trends_window5.png"))
 slope4, pvalue4 = calculate_trends_glm(matrix4, weight_prop_basic)
 # p4_glm_005 = carte des pentes de tendance significatives au seuil p <= 0.05.
-p4_glm_005 = glm_visu_trend(slope4, pvalue4)
+p4_glm_005 = glm_visu_trend(slope4, pvalue4; weights_file=weight_prop_basic)
 save_plot(p4_glm_005, joinpath(plot_dir, "ex4_glm_p005.png"))
 # p4_glm_015 = meme carte avec seuil p <= 0.15.
-p4_glm_015 = glm_visu_trend(slope4, pvalue4, p_value=0.15)
+p4_glm_015 = glm_visu_trend(slope4, pvalue4; p_value=0.15, weights_file=weight_prop_basic)
 save_plot(p4_glm_015, joinpath(plot_dir, "ex4_glm_p015.png"))
 
 
