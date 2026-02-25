@@ -7,6 +7,8 @@ using GLM # Pour analyses de tendance (modèle linéaire simple)
 using DataFrames 
 using Base.Threads 
 using RollingFunctions # Pour la création simple et rapide de vecteurs pondérés -> courbes pondérés
+using ArchGDAL
+using Proj
 
 
 function save_plot(plot_obj, plot_file)
@@ -18,6 +20,9 @@ function save_plot(plot_obj, plot_file)
     savefig(plot_obj, plot_file)
     return true
 end
+
+const CANADA_SHP = joinpath(@__DIR__, "..", "data", "shapefiles_canada", "lpr_000b21a_f.shp")
+const OUTLINE_CACHE = Dict{String, Vector{Tuple{Vector{Float64}, Vector{Float64}}}}()
 
 function country_mask_for_map(weights::AbstractMatrix{<:Real}, target_size::Tuple{Int, Int})
     mask = weights .> 0.0
@@ -31,16 +36,119 @@ function country_mask_for_map(weights::AbstractMatrix{<:Real}, target_size::Tupl
     error("Incompatible sizes between weights $(size(weights)) and map $(target_size).")
 end
 
-function add_country_outline!(p, mask::AbstractMatrix{Bool}; linecolor=:black, linewidth=1.2)
-    contour!(
-        p,
-        Float64.(mask);
-        levels=[0.5],
-        c=linecolor,
-        linewidth=linewidth,
-        label=false
-    )
+function shapefile_to_wgs84(srs)
+    crs_wkt = try
+        ArchGDAL.toWKT(srs)
+    catch
+        ""
+    end
+    crs_src = !isempty(strip(crs_wkt)) ? crs_wkt : (try
+        ArchGDAL.toPROJ4(srs)
+    catch
+        ""
+    end)
+    isempty(strip(crs_src)) && error("Unable to export shapefile CRS to WKT/PROJ4.")
+    return Proj.Transformation(crs_src, "EPSG:4326", always_xy=true)
+end
+
+function collect_outline_segments!(segs::Vector{Tuple{Vector{Float64}, Vector{Float64}}}, geom, pj)
+    gname = uppercase(ArchGDAL.geomname(geom))
+    if startswith(gname, "LINESTRING") && !occursin("MULTI", gname)
+        n = ArchGDAL.ngeom(geom)
+        if n >= 2
+            max_points = 2000
+            step = max(1, cld(n, max_points))
+            idxs = collect(0:step:(n - 1))
+            (last(idxs) == n - 1) || push!(idxs, n - 1)
+
+            xs = Vector{Float64}(undef, length(idxs))
+            ys = Vector{Float64}(undef, length(idxs))
+            for (k, i) in enumerate(idxs)
+                x, y, _ = ArchGDAL.getpoint(geom, i)
+                lon, lat = pj(Float64(x), Float64(y))
+                xs[k] = Float64(lon)
+                ys[k] = Float64(lat)
+            end
+            push!(segs, (xs, ys))
+        end
+        return
+    end
+    for i in 0:(ArchGDAL.ngeom(geom) - 1)
+        collect_outline_segments!(segs, ArchGDAL.getgeom(geom, i), pj)
+    end
+end
+
+
+@inline function segment_length(seg::Tuple{Vector{Float64}, Vector{Float64}})
+    xs, ys = seg
+    acc = 0.0
+    for i in 2:length(xs)
+        acc += hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1])
+    end
+    return acc
+end
+
+function load_outline_segments(shp_path::AbstractString)
+    key = String(shp_path)
+    if haskey(OUTLINE_CACHE, key)
+        return OUTLINE_CACHE[key]
+    end
+    isfile(shp_path) || error("Shapefile not found: $shp_path")
+
+    segments = ArchGDAL.read(shp_path) do dataset
+        layer = ArchGDAL.getlayer(dataset, 0)
+        srs = ArchGDAL.getspatialref(layer)
+        pj = shapefile_to_wgs84(srs)
+
+        geoms = ArchGDAL.IGeometry[]
+        for feat in layer
+            push!(geoms, ArchGDAL.clone(ArchGDAL.getgeom(feat)))
+        end
+        isempty(geoms) && error("No geometries found in $shp_path")
+
+        u = geoms[1]
+        for k in 2:length(geoms)
+            u = ArchGDAL.union(u, geoms[k])
+        end
+
+        boundary = ArchGDAL.boundary(u)
+        segs = Tuple{Vector{Float64}, Vector{Float64}}[]
+        collect_outline_segments!(segs, boundary, pj)
+        # Keep only the largest contour segments to avoid plotting bottlenecks.
+        lengths = [segment_length(seg) for seg in segs]
+        keep = findall(>(0.05), lengths)
+        if !isempty(keep)
+            segs = segs[keep]
+            lengths = lengths[keep]
+        end
+        max_segments = 1200
+        if length(segs) > max_segments
+            order = partialsortperm(lengths, 1:max_segments; rev=true)
+            segs = segs[order]
+        end
+        segs
+    end
+
+    OUTLINE_CACHE[key] = segments
+    return segments
+end
+
+function add_country_outline!(p, outline_segments::Vector{Tuple{Vector{Float64}, Vector{Float64}}}; linecolor=:black, linewidth=1.2)
+    for (xs, ys) in outline_segments
+        plot!(p, xs, ys; color=linecolor, linewidth=linewidth, label=false)
+    end
     return p
+end
+
+function prepare_heatmap_axes(lons::AbstractVector, lats::AbstractVector, z::AbstractMatrix)
+    nrows, ncols = size(z)
+    nrows == length(lats) || error("Heatmap rows ($nrows) != latitude length ($(length(lats))).")
+    ncols == length(lons) || error("Heatmap cols ($ncols) != longitude length ($(length(lons))).")
+    lon_idx = sortperm(lons)
+    lat_idx = sortperm(lats)
+    x_plot = Float64.(lons[lon_idx])
+    y_plot = Float64.(lats[lat_idx])
+    return x_plot, y_plot, lon_idx, lat_idx
 end
 
 
@@ -563,27 +671,40 @@ Les zones où p > `p_value` sont masquées (NaN) et n'apparaissent pas sur la ca
 - `p_map` : Matrice des p-values correspondantes.
 - `p_value` : Seuil de significativité (défaut 0.05 pour 95% de confiance).
 """
-function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights=nothing)
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing)
 
     # 2. Filter: Keep only significant trends (95% confidence)
     # We set non-significant pixels to NaN so they don't show up
     sig_slope_map = copy(slope_map)
-    print(length(sig_slope_map[p_map .> p_value]))
     sig_slope_map[p_map .> p_value] .= NaN
     # 3. Plot
     limit = maximum(abs.(filter(!isnan, sig_slope_map)))
-    print(limit)
-    p = heatmap(sig_slope_map', 
+    lons = collect(1:size(sig_slope_map, 1))
+    lats = collect(1:size(sig_slope_map, 2))
+    outline_segments = nothing
+    if !isnothing(weights_file)
+        ds = NCDataset(weights_file)
+        lats = ds["latitude"][:]
+        lons = ds["longitude"][:]
+        close(ds)
+        outline_segments = load_outline_segments(CANADA_SHP)
+    end
+    z_map = sig_slope_map'
+    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, z_map)
+    z_plot = z_map[lat_idx, lon_idx]
+    p = heatmap(
+        x_plot,
+        y_plot,
+        z_plot,
         title = "Significant Warming Trends, p-value= $p_value",
         c = :balance,
         #clims = (-limit, limit),
         clims = (-0.065, 0.065),
-        yflip = true,
+        yflip = false,
         aspect_ratio = :equal
     )
-    if !isnothing(weights)
-        mask = country_mask_for_map(weights, size(sig_slope_map'))
-        add_country_outline!(p, mask)
+    if !isnothing(outline_segments)
+        add_country_outline!(p, outline_segments)
     end
     return p
 end
@@ -602,9 +723,17 @@ zones d'intérêt. L'échelle de couleur est fixée globalement pour permettre l
 - `valid_years` : Vecteur des années correspondant à la dimension temporelle.
 - `filename` : Nom du fichier de sortie (défaut "temperature_evolution.gif").
 """
-function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights; filename="temperature_evolution.gif")
+function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif")
     
     println("Generating animation...")
+
+    ds = NCDataset(weights_file)
+    weights = ds["weights_frac"][:, :]
+    lats = ds["latitude"][:]
+    lons = ds["longitude"][:]
+    close(ds)
+    outline_segments = load_outline_segments(CANADA_SHP)
+    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, data_3d[:, :, 1]')
 
     # 1. Determine fixed color limits for the whole period
     # We ignore NaNs so they don't break the min/max calculation
@@ -624,8 +753,12 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
         # but heatmap expects [x, y]. 
         current_map = data_3d[:, :, i]'
         current_map[.!mask] .= NaN
+        z_plot = current_map[lat_idx, lon_idx]
 
-        p = heatmap(current_map,
+        p = heatmap(
+            x_plot,
+            y_plot,
+            z_plot,
             title = "Mean Temperature: $i",
             clims = (min_val, max_val),
             c = :thermal,   # Color palette
@@ -633,9 +766,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
             ylabel = "Latitude",
             aspect_ratio = :equal,
             right_margin = 5Plots.mm,
-            yflip = true    # Give space for the colorbar
+            yflip = false    # Give space for the colorbar
         )
-        add_country_outline!(p, mask)
+        add_country_outline!(p, outline_segments)
         p
     end
 
@@ -646,7 +779,12 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
 end
 
 
-function vizumap(data_2d, weights)
+function vizumap(data_2d, weights_file)
+    ds = NCDataset(weights_file)
+    weights = ds["weights_frac"][:, :]
+    lats = ds["latitude"][:]
+    lons = ds["longitude"][:]
+    close(ds)
     valid_data = filter(!ismissing, data_2d)
     if isempty(valid_data)
         println("Error: Data contains only NaNs.")
@@ -655,8 +793,14 @@ function vizumap(data_2d, weights)
     current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
     mask = country_mask_for_map(weights, size(current_map))
     current_map[.!mask] .= NaN
+    outline_segments = load_outline_segments(CANADA_SHP)
+    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, current_map)
+    z_plot = current_map[lat_idx, lon_idx]
     min_val, max_val = minimum(valid_data), maximum(valid_data)
-    p = heatmap(current_map,
+    p = heatmap(
+            x_plot,
+            y_plot,
+            z_plot,
             title = "Temperature",
             clims = (min_val, max_val),
             c = :thermal,   # Color palette
@@ -664,7 +808,7 @@ function vizumap(data_2d, weights)
             ylabel = "Latitude",
             aspect_ratio = :equal,
             right_margin = 5Plots.mm,
-            yflip = true)    # Give space for the colorbar
-    add_country_outline!(p, mask)
+            yflip = false)    # Give space for the colorbar
+    add_country_outline!(p, outline_segments)
     return p
 end
