@@ -9,10 +9,10 @@ c = cdsapi.Client()
 # 2) Définition de la zone
 AREA_CA = [84.0, -142.0, 41.0, -52.0]
 # CHANGE 1: Use 0.1 for ERA5-Land (Native resolution) instead of 0.25
-GRID = [0.1, 0.1] 
+GRID = [0.25, 0.25] 
 
 # 3) Période à télécharger
-START_YEAR = 2001
+START_YEAR = 1950
 END_YEAR = 2025
 YEARS = list(range(START_YEAR, END_YEAR + 1))
 MONTHS = list(range(1, 13))
@@ -21,15 +21,16 @@ DAYS = [f"{d:02d}" for d in range(1, 32)]
 TIMES = [f"{h:02d}:00" for h in range(24)]
 
 # 4) Dossier de sortie
-OUT_DIR = Path("era5_land_ca_t2m") # Renamed folder for clarity
+OUT_DIR = Path("era5_ca_t2m_31km") # Renamed folder for clarity
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def retrieve_one_month(year: int, month: int, out_path: Path) -> None:
-    """Download one month of ERA5-LAND t2m."""
+    """Download one month of ERA5 t2m."""
     
     request = {
         # CHANGE 2: REMOVED "product_type": "reanalysis" (Causes error for Land)
         "variable": ["2m_temperature"],
+        "product_type": "reanalysis",
         "year": f"{year:04d}",
         "month": f"{month:02d}",
         "day": DAYS,
@@ -38,14 +39,14 @@ def retrieve_one_month(year: int, month: int, out_path: Path) -> None:
         "format": "netcdf", 
         # Optional: You can remove "grid" to get default, 
         # or keep it to force interpolation.
-        # "grid": GRID, 
+        "grid": GRID, 
     }
 
     start = time.time()
     
     # CHANGE 3: Dataset name changed to 'reanalysis-era5-land'
     c.retrieve(
-        "reanalysis-era5-land",
+        "reanalysis-era5-single-levels",
         request,
         str(out_path),
     )
