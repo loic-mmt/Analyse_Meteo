@@ -12,10 +12,6 @@ using Proj
 
 
 function save_plot(plot_obj, plot_file)
-    if plot_obj === nothing
-        @warn "Skipping save: plot object is nothing for $plot_file"
-        return false
-    end
     isfile(plot_file) && rm(plot_file)
     savefig(plot_obj, plot_file)
     return true
@@ -181,7 +177,7 @@ Exporte :
 """
 function compute_general_climatology(
     data_folder::String, 
-    weights::Matrix{Float64}, 
+    weights_file::String, 
     year_range; 
     mode::Symbol=:total, 
     selected_months=collect(1:12), 
@@ -205,6 +201,9 @@ function compute_general_climatology(
     if selected_days isa Integer
         selected_days = [selected_days]
     end
+    ds=NCDataset(weights_file)
+    weights=ds["final_weights"][:,:]
+    close(ds)
     # 1. Accumulate Raw Data
     println("Step 1: Accumulating data...")
     # Pass selected_hours to the function
@@ -214,10 +213,6 @@ function compute_general_climatology(
     # 2. Compute Means & Cube 
     println("Step 2: Computing means...")
     (final_cube, valid_times) = finalize_cube(sums, counts, weights, mode)
-    isempty(valid_times) && error(
-        "No valid data found for filters: years=$(year_range), months=$(selected_months), " *
-        "days=$(selected_days), hours=$(selected_hours)."
-    )
 
     # 3. Export (Optional)
     if !isnothing(export_path)
@@ -259,13 +254,7 @@ function accumulate_data(data_folder, year_range, mode, months, days, hours, var
     for year in year_range
         for month in months
             month_str = lpad(month, 2, '0')
-            files = if isfile(data_folder)
-                [data_folder]
-            elseif isdir(data_folder)
-                glob("*$(year)_$(month_str)*.nc", data_folder)
-            else
-                error("Invalid data source '$data_folder': expected a .nc file or a directory.")
-            end
+            files = glob("*$(year)_$(month_str)*.nc", data_folder)
             
             # Check if file exists to avoid crash
             if isempty(files)
@@ -278,22 +267,13 @@ function accumulate_data(data_folder, year_range, mode, months, days, hours, var
                     lons, lats = ds["longitude"][:], ds["latitude"][:]
                 end
                 # On réccupère le vecteur de date sur le mois
-                time_var = if haskey(ds, "valid_time")
-                    "valid_time"
-                elseif haskey(ds, "time")
-                    "time"
-                else
-                    error("No time coordinate found (expected 'valid_time' or 'time').")
-                end
-                times = ds[time_var][:]
+                times = ds["valid_time"][:]
 
                 ### UPDATED: Robust filtering for Days AND Hours
                 # We select index 'i' if:
                 # 1. The day is in 'days' (or days is nothing)
                 # 2. AND the hour is in 'hours'
                 indices = findall(t -> 
-                    (Dates.year(t) == year) &&
-                    (Dates.month(t) == month) &&
                     (isnothing(days) || day(t) in days) && 
                     (hour(t) in hours), 
                     times
@@ -307,7 +287,7 @@ function accumulate_data(data_folder, year_range, mode, months, days, hours, var
                         time_val = times[indices[t]]
                         
                         # Get key based on new logic (including daily)
-                        key = get_binning_key(mode, Dates.year(time_val), Dates.month(time_val), time_val)
+                        key = get_binning_key(mode, year, month, time_val)
                         # Test si la variable "days" est vide, si non on réccupère les indices dont le jour correspond.
                         if !haskey(sums_dict, key)
                             dims = size(data_slice)[1:2]
@@ -491,12 +471,15 @@ en ajustant la somme des poids dynamiquement.
 """
 function means_vector_calculation(
     data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, 
-    weights::Matrix{Float64}
+    weights_file::String
 )
     # Initialisation du vecteur
     temp_means = Float64[]
 
     # Pour avoir la même taille (latxlon)
+    ds=NCDataset(weights_file)
+    weights=ds["final_weights"][:,:]
+    close(ds)
     weights = weights'
 
 
@@ -618,8 +601,11 @@ en excluant les zones masquées par les poids (ex: océans).
 - `slope_grid::Matrix` : Carte des pentes (coefficients directeurs).
 - `p_value_grid::Matrix` : Carte des p-values associées (significativité statistique).
 """
-function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights)
+function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file)
 
+    ds= NCDataset(weights_file)
+    weights=ds["weights_frac"][:,:]
+    close(ds)
     n_lon, n_lat, n_time = size(data_3d)
     
     # Initialize grids
@@ -633,7 +619,7 @@ function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 
 
     for i in 1:n_lon
         for j in 1:n_lat
-            if weights[j, i] < 0.0
+            if weights[j, i] < 0.5
                 continue
             end            
             y_temps = data_3d[i, j, :]
@@ -671,7 +657,7 @@ Les zones où p > `p_value` sont masquées (NaN) et n'apparaissent pas sur la ca
 - `p_map` : Matrice des p-values correspondantes.
 - `p_value` : Seuil de significativité (défaut 0.05 pour 95% de confiance).
 """
-function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing)
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing, outline=true)
 
     # 2. Filter: Keep only significant trends (95% confidence)
     # We set non-significant pixels to NaN so they don't show up
@@ -687,7 +673,7 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
         lats = ds["latitude"][:]
         lons = ds["longitude"][:]
         close(ds)
-        outline_segments = load_outline_segments(CANADA_SHP)
+        outline_segments = load_outline_segments(FRANCE_SHP)
     end
     z_map = sig_slope_map'
     x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, z_map)
@@ -703,7 +689,7 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
         yflip = false,
         aspect_ratio = :equal
     )
-    if !isnothing(outline_segments)
+    if outline
         add_country_outline!(p, outline_segments)
     end
     return p
@@ -723,7 +709,7 @@ zones d'intérêt. L'échelle de couleur est fixée globalement pour permettre l
 - `valid_years` : Vecteur des années correspondant à la dimension temporelle.
 - `filename` : Nom du fichier de sortie (défaut "temperature_evolution.gif").
 """
-function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif")
+function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif", outline=false)
     
     println("Generating animation...")
 
@@ -732,9 +718,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     lats = ds["latitude"][:]
     lons = ds["longitude"][:]
     close(ds)
-    outline_segments = load_outline_segments(CANADA_SHP)
+    outline_segments = load_outline_segments(FRANCE_SHP)
+    mask = country_mask_for_map(weights, size(data_3d[:, :, 1]'))
     x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, data_3d[:, :, 1]')
-
     # 1. Determine fixed color limits for the whole period
     # We ignore NaNs so they don't break the min/max calculation
     valid_data = filter(!ismissing, data_3d)
@@ -743,7 +729,6 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
         return
     end
     min_val, max_val = minimum(valid_data), maximum(valid_data)
-    mask = country_mask_for_map(weights, size(data_3d[:, :, 1]'))
     
     # 2. Create the Animation object
     anim = @animate for i in 1:length(data_3d[1,1,:])
@@ -768,7 +753,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
             right_margin = 5Plots.mm,
             yflip = false    # Give space for the colorbar
         )
-        add_country_outline!(p, outline_segments)
+        if outline
+            add_country_outline!(p, outline_segments)
+        end
         p
     end
 
@@ -779,9 +766,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
 end
 
 
-function vizumap(data_2d, weights_file)
+function vizumap(data_2d, weights_file, outline=false)
     ds = NCDataset(weights_file)
-    weights = ds["weights_frac"][:, :]
+    weights = ds["weights_frac"][:,:]
     lats = ds["latitude"][:]
     lons = ds["longitude"][:]
     close(ds)
@@ -793,7 +780,7 @@ function vizumap(data_2d, weights_file)
     current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
     mask = country_mask_for_map(weights, size(current_map))
     current_map[.!mask] .= NaN
-    outline_segments = load_outline_segments(CANADA_SHP)
+    outline_segments = load_outline_segments(FRANCE_SHP)
     x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, current_map)
     z_plot = current_map[lat_idx, lon_idx]
     min_val, max_val = minimum(valid_data), maximum(valid_data)
@@ -809,6 +796,8 @@ function vizumap(data_2d, weights_file)
             aspect_ratio = :equal,
             right_margin = 5Plots.mm,
             yflip = false)    # Give space for the colorbar
-    add_country_outline!(p, outline_segments)
+    if outline
+        add_country_outline!(p, outline_segments)
+    end
     return p
 end

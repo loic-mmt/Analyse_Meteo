@@ -656,7 +656,7 @@ Les zones où p > `p_value` sont masquées (NaN) et n'apparaissent pas sur la ca
 - `p_map` : Matrice des p-values correspondantes.
 - `p_value` : Seuil de significativité (défaut 0.05 pour 95% de confiance).
 """
-function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing)
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing, outline=true)
 
     # 2. Filter: Keep only significant trends (95% confidence)
     # We set non-significant pixels to NaN so they don't show up
@@ -688,7 +688,7 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
         yflip = false,
         aspect_ratio = :equal
     )
-    if !isnothing(outline_segments)
+    if outline
         add_country_outline!(p, outline_segments)
     end
     return p
@@ -708,7 +708,7 @@ zones d'intérêt. L'échelle de couleur est fixée globalement pour permettre l
 - `valid_years` : Vecteur des années correspondant à la dimension temporelle.
 - `filename` : Nom du fichier de sortie (défaut "temperature_evolution.gif").
 """
-function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif")
+function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif", outline=false)
     
     println("Generating animation...")
 
@@ -752,7 +752,9 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
             right_margin = 5Plots.mm,
             yflip = false    # Give space for the colorbar
         )
-        add_country_outline!(p, outline_segments)
+        if outline
+            add_country_outline!(p, outline_segments)
+        end
         p
     end
 
@@ -763,7 +765,7 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
 end
 
 
-function vizumap(data_2d, weights_file)
+function vizumap(data_2d, weights_file, outline=false)
     ds = NCDataset(weights_file)
     weights = ds["weights_frac"][:,:]
     lats = ds["latitude"][:]
@@ -793,6 +795,8 @@ function vizumap(data_2d, weights_file)
             aspect_ratio = :equal,
             right_margin = 5Plots.mm,
             yflip = false)    # Give space for the colorbar
-    add_country_outline!(p, outline_segments)
+    if outline
+        add_country_outline!(p, outline_segments)
+    end
     return p
 end
