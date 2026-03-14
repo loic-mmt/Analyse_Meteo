@@ -12,7 +12,7 @@ AREA_CA = [84.0, -142.0, 41.0, -52.0]
 GRID = [0.25, 0.25] 
 
 # 3) Période à télécharger
-START_YEAR = 1950
+START_YEAR = 2014
 END_YEAR = 2025
 YEARS = list(range(START_YEAR, END_YEAR + 1))
 MONTHS = list(range(1, 13))
