@@ -1,9 +1,15 @@
 include("function2charge.jl")
 include("dataset2load.jl")
 
+3
+# Test en 31x31 canada.
+matrix0 = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1997, selected_days=03, selected_months=10, selected_hours=19)
+vizumap(matrix0, weight_canada_31)
+means_vector_calculation(matrix0, weight_canada_31)
+
 
 # Exemple 1 : information sur une heure precise (03/10/1997 a 19h).
-matrix1 = compute_general_climatology(data_folder_ca, weight_canada, 1997; selected_days=03, selected_months=10, selected_hours=19)
+matrix1 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 1997; selected_days=03, selected_months=10, selected_hours=19)
 # p1 = carte instantanee de temperature pour cette date/heure.
 vizumap(matrix1, weight_canada)
 # Serie moyenne spatiale (ici un seul pas de temps car on a filtré une seule heure).

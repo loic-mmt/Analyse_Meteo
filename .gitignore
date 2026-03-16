@@ -12,3 +12,4 @@ demo/plot/*.gif
 demo_canada/plot/ex3_animation.gif
 /era5_land_ca_t2m
 src/era5_land_ca_t2m
+src/era5_ca_t2m_31km

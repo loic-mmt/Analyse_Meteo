@@ -248,9 +248,9 @@ end
 
 # ======== Inputs =========
 
-sample_nc = "data/canada/data_0.nc"     # un seul fichier pour la grille
+sample_nc = "src/era5_ca_t2m_31km/era5_land_t2m_ca_1950_01.nc"     # un seul fichier pour la grille
 shp = "data/shapefiles_canada/lpr_000b21a_f.shp"
-out_weights_nc = "data/masks/weights_canada.nc"
+out_weights_nc = "data/masks/weights_canada_31.nc"
 isfile(shp) || error("Shapefile Canada introuvable: $shp")
 ensure_output_writable(out_weights_nc)
 
