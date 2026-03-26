@@ -1,7 +1,8 @@
 cd(joinpath(@__DIR__, "..", ".."))
 # Chargement des fonctions :
-include("demo/function2charge.jl")
-include("demo/dataset2load.jl")
+include("../../demo/function2charge.jl")
+# Chargement des variables de base :
+include("../../demo/dataset2load.jl")
 
 
 # 1. Calculer la matrice mensuelle sur toute la période
