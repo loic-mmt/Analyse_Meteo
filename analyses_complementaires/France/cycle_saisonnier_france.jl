@@ -1,33 +1,7 @@
-using Pkg
-# On active l'environnement à la racine du projet (remonte de 2 dossiers)
-Pkg.activate(joinpath(@__DIR__, "..", ".."))
-
-# --- Imports standards ---
-using Dates           # Manipulation des calendriers et périodes 1950:2025
-using Statistics      # Calcul des moyennes (mean) et écart-types
-using Base.Threads    # Accélération calcul par parallélisation (si tes fonctions l'utilisent)
-
-# --- Manipulation de données ---
-using NCDatasets      # Lecture indispensable des fichiers météo .nc
-using DataFrames      # Organisation des résultats en tableaux
-using RollingFunctions # Pour les moyennes glissantes (le fameux 'window' dans ton code)
-
-# --- Analyse Statistique & Modélisation ---
-using GLM             # Pour les régressions linéaires (tendances de réchauffement)
-
-# --- SIG & Géospatial (Cartographie) ---
-using ArchGDAL        # Manipulation des formats raster/vecteur
-using Proj            # Gestion des projections (Lambert93, etc.)
-
-# --- Visualisation ---
-using Plots           # Base du graphique
-using StatsPlots      # Extensions pour les graphiques statistiques (densités, boxplots)
-
-
+cd(joinpath(@__DIR__, "..", ".."))
 # Chargement des fonctions :
-include("../../demo/function2charge.jl")
-# Chargement des variables de base :
-include("../../demo/dataset2load.jl")
+include("demo/function2charge.jl")
+include("demo/dataset2load.jl")
 
 
 # 1. Calculer la matrice mensuelle sur toute la période
