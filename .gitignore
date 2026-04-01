@@ -8,6 +8,7 @@ visualisation/analyse_t2m.html
 demo/output
 demo/plot/ex3_animation.gif.DS_Store
 demo/plot/*.gif
+demo_france/plot/*.gif
 *.nc
 demo_canada/plot/ex3_animation.gif
 /era5_land_ca_t2m
