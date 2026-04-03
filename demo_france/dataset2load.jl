@@ -1,6 +1,6 @@
 # Assignation des différents chemins utiles
 data_folder_precise = "data/france/france_9"
-data_folder_basic ="data/france/france_9_31"
+data_folder_basic ="data/france/france_31"
 data_folder_ca_9="src/era5_land_ca_t2m"
 data_folder_ca_31="src/era5_ca_t2m_31km"
 weight_prop_basic = "data/masks/weights_france_31.nc"
