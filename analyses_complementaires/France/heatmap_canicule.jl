@@ -17,10 +17,11 @@ const PROJECT_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 # Données température
 const data_folder_precise = joinpath(PROJECT_ROOT, "data", "france", "france_9")
 const data_folder_basic = joinpath(PROJECT_ROOT, "data", "france", "france_9_31")
-
+const data_folder_temporel = joinpath(PROJECT_ROOT, "data", "raw_monthly_combined", "precise")
 # Fichiers de poids
 const weight_prop_basic = joinpath(PROJECT_ROOT, "data", "masks", "weights_france_31.nc")
 const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_france_9.nc")
+const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_prop_precise.nc")
 
 # Dossier de sortie des figures
 const plot_dir = joinpath(@__DIR__, "plot")
@@ -39,6 +40,25 @@ Sauvegarde une figure en écrasant le fichier existant si besoin.
 function save_plot(plot_obj, plot_file)
     isfile(plot_file) && rm(plot_file)
     savefig(plot_obj, plot_file)
+end
+
+"""
+    print_progress(prefix, current, total; width=30)
+
+Affiche une barre de progression simple en ligne (`\\r`) pour suivre
+l'avancement des boucles longues.
+"""
+function print_progress(prefix::AbstractString, current::Int, total::Int; width::Int=30)
+    total <= 0 && return
+    ratio = clamp(current / total, 0.0, 1.0)
+    filled = round(Int, ratio * width)
+    bar = repeat("#", filled) * repeat("-", width - filled)
+    pct = round(ratio * 100; digits=1)
+    print("\r$(prefix) [$(bar)] $(pct)% ($(current)/$(total))")
+    flush(stdout)
+    if current == total
+        println()
+    end
 end
 
 
@@ -290,12 +310,18 @@ function accumulate_data(data_folder, year_range, mode, months, days, hours, var
     sums_dict = Dict{Any, Matrix{Float64}}()
     counts_dict = Dict{Any, Matrix{Int}}()
     lons, lats = nothing, nothing
+    total_steps = length(year_range) * length(months)
+    step = 0
 
     for year in year_range
         for month in months
+            step += 1
             month_str = lpad(month, 2, '0')
             files = sort(glob("*$(year)_$(month_str)*.nc", data_folder))
-            isempty(files) && continue
+            if isempty(files)
+                print_progress("Accumulation", step, total_steps)
+                continue
+            end
 
             for file in files
                 NCDataset(file) do ds
@@ -334,11 +360,10 @@ function accumulate_data(data_folder, year_range, mode, months, days, hours, var
                     end
                 end
             end
+            print_progress("Accumulation", step, total_steps)
         end
-        print("\rProcessed Year $year    ")
     end
 
-    println("")
     return sums_dict, counts_dict, lons, lats
 end
 
@@ -510,8 +535,152 @@ function calculate_heat_days(
             # 3) conversion en heures
             heat_hours_grid[i, j] = canicule_days * block_hours
         end
+        print_progress("Canicule", i, n_lon)
     end
 
+    return heat_hours_grid
+end
+
+"""
+    finalize_open_runs!(run_len, canicule_days, min_consecutive_days)
+
+Ajoute les séquences encore ouvertes à la fin d'un bloc temporel.
+"""
+function finalize_open_runs!(run_len::AbstractMatrix{<:Integer}, canicule_days::AbstractMatrix{<:Integer}, min_consecutive_days::Int)
+    tail = run_len .>= min_consecutive_days
+    if any(tail)
+        canicule_days[tail] .+= run_len[tail]
+    end
+    return nothing
+end
+
+"""
+    calculate_heat_days_streaming(data_folder, weights_file, year_range; ...)
+
+Version basse mémoire : lit les NetCDF mois par mois et calcule les heures
+de canicule sans construire de cube 3D global.
+
+Cette fonction évite les `killed` liés à la RAM sur les longues périodes.
+Par défaut, le masque garde tous les pixels avec une fraction de territoire
+strictement positive (`weights_frac > 0`) pour conserver les bords.
+"""
+function calculate_heat_days_streaming(
+    data_folder::String,
+    weights_file::String,
+    year_range;
+    selected_months=collect(1:12),
+    variable_name::String="t2m",
+    day_threshold::Float64=36.0,
+    night_threshold::Float64=21.0,
+    min_consecutive_days::Int=3,
+    mask_threshold::Float64=0.0,
+    day_hours::Int=24
+)
+    if year_range isa Integer
+        year_range = [year_range]
+    end
+    if selected_months isa Integer
+        selected_months = [selected_months]
+    end
+
+    # Trouver un premier fichier pour récupérer les dimensions de la grille.
+    first_file = nothing
+    for year in year_range, month in selected_months
+        month_str = lpad(month, 2, '0')
+        files = sort(glob("*$(year)_$(month_str)*.nc", data_folder))
+        if !isempty(files)
+            first_file = files[1]
+            break
+        end
+    end
+    isnothing(first_file) && error("Aucun fichier NetCDF trouvé dans $data_folder pour la période demandée.")
+
+    n_lon, n_lat = NCDataset(first_file) do ds0
+        dims = size(ds0[variable_name])
+        dims[1], dims[2]
+    end
+
+    # Masque spatial aligné sur la grille des données [lon, lat].
+    dsw = NCDataset(weights_file)
+    weights = dsw["weights_frac"][:, :]
+    close(dsw)
+    land_mask =
+        if size(weights) == (n_lon, n_lat)
+            weights .> mask_threshold
+        elseif size(weights) == (n_lat, n_lon)
+            permutedims(weights) .> mask_threshold
+        else
+            error("Dimensions incompatibles entre poids $(size(weights)) et grille ($((n_lon, n_lat))).")
+        end
+
+    # Etats persistants entre les jours (pour suivre les séquences consécutives).
+    run_len = zeros(Int16, n_lon, n_lat)
+    canicule_days = zeros(Int32, n_lon, n_lat)
+
+    total_steps = length(year_range) * length(selected_months)
+    step = 0
+    println("Starting streaming heatwave-hour calculations...")
+
+    for year in year_range
+        for month in selected_months
+            step += 1
+            month_str = lpad(month, 2, '0')
+            files = sort(glob("*$(year)_$(month_str)*.nc", data_folder))
+
+            if isempty(files)
+                # Si un mois manque, on clôt les séquences en cours.
+                finalize_open_runs!(run_len, canicule_days, min_consecutive_days)
+                run_len .= 0
+                print_progress("Canicule stream", step, total_steps)
+                continue
+            end
+
+            for file in files
+                NCDataset(file) do ds
+                    times = ds["valid_time"][:]
+                    n_t = length(times)
+                    k = 1
+
+                    while k <= n_t
+                        current_day = Date(times[k])
+                        k2 = k
+                        while k2 <= n_t && Date(times[k2]) == current_day
+                            k2 += 1
+                        end
+                        idx = k:(k2 - 1)
+
+                        day_cube = ds[variable_name][:, :, idx]
+                        # ERA5 `t2m` est en Kelvin: conversion explicite en Celsius
+                        # pour comparer correctement aux seuils 36°C / 21°C.
+                        day_vals = Float64.(coalesce.(day_cube, NaN)) .- 273.15
+                        day_max = dropdims(maximum(day_vals, dims=3), dims=3)
+                        day_min = dropdims(minimum(day_vals, dims=3), dims=3)
+                        valid_day = dropdims(all(.!isnan.(day_vals), dims=3), dims=3)
+
+                        hot_day = valid_day .& land_mask .& (day_max .> day_threshold) .& (day_min .> night_threshold)
+
+                        run_len[hot_day] .+= 1
+                        cold = .!hot_day
+                        ended = cold .& (run_len .>= min_consecutive_days)
+                        if any(ended)
+                            canicule_days[ended] .+= run_len[ended]
+                        end
+                        run_len[cold] .= 0
+
+                        k = k2
+                    end
+                end
+            end
+
+            print_progress("Canicule stream", step, total_steps)
+        end
+    end
+
+    # Clôture des séquences à la fin de la période.
+    finalize_open_runs!(run_len, canicule_days, min_consecutive_days)
+
+    heat_hours_grid = fill(NaN, n_lon, n_lat)
+    heat_hours_grid[land_mask] .= canicule_days[land_mask] .* day_hours
     return heat_hours_grid
 end
 
@@ -598,8 +767,8 @@ Pipeline complet prêt à l'emploi :
 Cette fonction est pratique quand le fichier est importé depuis un autre script.
 """
 function run_canicule_heatmap(;
-    data_folder::String=data_folder_basic,
-    weights_file::String=weight_prop_basic,
+    data_folder::String=data_folder_temporel,
+    weights_file::String=weight_temporel,
     year_range=1950:2025,
     selected_months=collect(1:12),
     output_file::String=joinpath(plot_dir, "heatmap_canicule_1950_2025.png"),
@@ -610,25 +779,20 @@ function run_canicule_heatmap(;
 )
     println("Running heatmap pipeline...")
     println("Years: $(first(year_range)) -> $(last(year_range))")
+    println("Step 1: Streaming canicule computation...")
 
-    temp_cube = compute_general_climatology(
+    heat_hours = calculate_heat_days_streaming(
         data_folder,
         weights_file,
         year_range;
-        mode=:hourly,
         selected_months=selected_months,
-        selected_days=nothing,
-        selected_hours=0:23,
-        variable_name="t2m"
-    )
-
-    heat_hours = calculate_heat_days(
-        temp_cube,
-        weights_file;
+        variable_name="t2m",
         day_threshold=day_threshold,
         night_threshold=night_threshold,
         min_consecutive_days=min_consecutive_days
     )
+
+    println("Step 2: Rendering map...")
 
     p = vizumap(
         heat_hours,
