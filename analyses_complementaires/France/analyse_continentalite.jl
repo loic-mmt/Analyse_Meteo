@@ -15,10 +15,10 @@ cd(project_dir)
 plot_dir = joinpath(@__DIR__, "plot")
 isdir(plot_dir) || mkpath(plot_dir)
 
-# Utilisation du masque de 31km (cohérent avec data_folder_basic)
+# Utilisation du masque de 31km 
 fichier_poids_france = joinpath(project_dir, "data", "masks", "weights_france_31.nc")
 
-# 2. REDÉFINITION DES FONCTIONS (Sécurité Dimensions et Kelvins)
+# 2. REDÉFINITION DES FONCTIONS 
 function finalize_cube(sums_dict, counts_dict, weights, mode)
     all_keys = sort(collect(keys(sums_dict)))
     valid_keys = filter(k -> any(counts_dict[k] .> 0), all_keys)
