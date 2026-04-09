@@ -1,62 +1,112 @@
-# 1. Configuration des chemins et chargement
-cd(joinpath(@__DIR__, "..", ".."))
-include("../../demo_france/function2charge.jl")
-include("../../demo_france/dataset2load.jl")
+# ================================================================================================
+# ANALYSE DE LA CONTINENTALITÉ (Points Côtiers vs Centraux)
+# ================================================================================================
 
-# Dossier de sortie spécifique
+# 1. Configuration des chemins et chargement
+project_dir = abspath(joinpath(@__DIR__, "..", ".."))
+println("Dossier projet détecté : ", project_dir)
+
+include(joinpath(project_dir, "demo_france", "function2charge.jl"))
+include(joinpath(project_dir, "demo_france", "dataset2load.jl"))
+
+cd(project_dir)
+
+# Dossier de sortie
 plot_dir = joinpath(@__DIR__, "plot")
 isdir(plot_dir) || mkpath(plot_dir)
 
-# Chargement du mask 
-fichier_poids_france = joinpath(@__DIR__, "weights_france_exact.nc")
+# Utilisation du masque de 31km (cohérent avec data_folder_basic)
+fichier_poids_france = joinpath(project_dir, "data", "masks", "weights_france_31.nc")
 
-# Matrice mensuelle globale
+# 2. REDÉFINITION DES FONCTIONS (Sécurité Dimensions et Kelvins)
+function finalize_cube(sums_dict, counts_dict, weights, mode)
+    all_keys = sort(collect(keys(sums_dict)))
+    valid_keys = filter(k -> any(counts_dict[k] .> 0), all_keys)
+    
+    if isempty(valid_keys)
+        return Array{Float64}(undef, 0, 0, 0), []
+    end
+
+    n_lon, n_lat = size(sums_dict[valid_keys[1]])
+    
+    # Alignement du masque
+    if size(weights) == (n_lon, n_lat)
+        w_final = weights
+    elseif size(weights') == (n_lon, n_lat)
+        w_final = weights'
+    else
+        w_final = ones(n_lon, n_lat)
+    end
+
+    visual_mask = [w > 0.05 ? 1.0 : NaN for w in w_final]
+
+    final_3d = zeros(Float64, n_lon, n_lat, length(valid_keys))
+    for (i, k) in enumerate(valid_keys)
+        # Moyenne et conversion Kelvin -> Celsius
+        mean_grid = (sums_dict[k] ./ counts_dict[k]) .- 273.15
+        final_3d[:, :, i] = mean_grid .* visual_mask
+    end
+    return final_3d, valid_keys
+end
+
+# 3. CALCUL DE LA CLIMATOLOGIE
+println("Étape 1 : Calcul de la climatologie mensuelle (1950-2025)...")
 matrix_saison = compute_general_climatology(data_folder_basic, fichier_poids_france, 1950:2025, mode=:monthly)
 
-# Identification des points (Côtier vs Central)
-ds_w = NCDataset(fichier_poids_france)
-weights_map = ds_w["final_weights"][:,:]
-close(ds_w)
+# 4. IDENTIFICATION DES POINTS (Sécurité BoundsError)
+println("Étape 2 : Identification des points sur la grille ", size(matrix_saison)[1:2], "...")
 
-# On récupère tous les indices de terre 
-indices_terre = findall(weights_map .> 0.8)
+# On crée un masque binaire à partir des données réelles pour être sûr de ne pas sortir des bornes
+# Si un pixel contient au moins une valeur numérique sur la période, c'est de la terre.
+mask_data = [all(isnan.(matrix_saison[i, j, :])) ? 0.0 : 1.0 for i in 1:size(matrix_saison,1), j in 1:size(matrix_saison,2)]
 
-# Point Côtier (Le plus à l'Ouest du masque de terre -> Bretagne)
-idx_cotier = indices_terre[argmin([idx[1] for idx in indices_terre])]
+indices_terre = findall(mask_data .== 1.0)
 
-# Point Central (calcul pour trouver le pixel qui se situe pile au centre géométrique de la France)
-# On prend la moyenne des longitudes et latitudes valides
-mid_lon = round(Int, mean([idx[1] for idx in indices_terre]))
-mid_lat = round(Int, mean([idx[2] for idx in indices_terre]))
-idx_central = (mid_lon, mid_lat)
+if isempty(indices_terre)
+    error("Aucune donnée de terre détectée dans matrix_saison.")
+end
 
-# 3. Extraction et calcul du cycle moyen : idx_cotier[1] → position en longitude
-# et idx_cotier[2] → position en latitude
+# Point Côtier : Le pixel de terre le plus à l'Ouest (Longitude min)
+lons_terres = [idx[1] for idx in indices_terre]
+idx_cotier = indices_terre[argmin(lons_terres)]
+
+# Point Central : Le pixel de terre le plus proche du centre géographique
+avg_lon = mean([idx[1] for idx in indices_terre])
+avg_lat = mean([idx[2] for idx in indices_terre])
+dist_centre = [abs(idx[1] - avg_lon) + abs(idx[2] - avg_lat) for idx in indices_terre]
+idx_central = indices_terre[argmin(dist_centre)]
+
+println("Points identifiés : Côtier $idx_cotier | Central $idx_central")
+
+# 5. EXTRACTION ET CALCUL DU CYCLE MOYEN
+# Extraction des séries temporelles
 serie_cotier  = matrix_saison[idx_cotier[1], idx_cotier[2], :]
 serie_central = matrix_saison[idx_central[1], idx_central[2], :]
 
-cycle_cotier  = mean(reshape(serie_cotier, 12, :), dims=2)[:, 1] 
-# On transforme la série en tableau avec 12 lignes = les mois (janvier → décembre)
-# et en colonnes = les années, puis on calcule la moyenne pour chaque mois
+# Repliement en 12 mois x N années et calcul de la moyenne par mois
+cycle_cotier  = mean(reshape(serie_cotier, 12, :), dims=2)[:, 1]
 cycle_central = mean(reshape(serie_central, 12, :), dims=2)[:, 1]
 
-# 4. Calcul de l'Amplitude Thermique (Indice de continentalité)
+# Calcul des amplitudes pour les labels
 amp_cotier  = round(maximum(cycle_cotier) - minimum(cycle_cotier), digits=1)
 amp_central = round(maximum(cycle_central) - minimum(cycle_central), digits=1)
 
-# 5. Graphique
+# 6. GRAPHIQUE FINAL
+println("Étape 3 : Génération du graphique...")
 p_cont = plot(1:12, cycle_cotier, 
-    label="Point Côtier (Bretagne) - Amp: $amp_cotier°C", 
-    linewidth=4, color=:dodgerblue, marker=:circle)
+    label="Côtier - Amplitude: $(amp_cotier)°C", 
+    linewidth=4, color=:dodgerblue, marker=:circle, markersize=5)
 
 plot!(p_cont, 1:12, cycle_central, 
-    label="Point Central (Berry) - Amp: $amp_central°C", 
-    linewidth=4, color=:orange, marker=:diamond,
-    title="Continentalité : Impact de la proximité océanique",
+    label="Central - Amplitude: $(amp_central)°C", 
+    linewidth=4, color=:crimson, marker=:diamond, markersize=5,
+    title="Analyse de Continentalité : Influence de l'Océan\n(Données ERA5 31km, France)",
     xlabel="Mois", ylabel="Température Moyenne (°C)",
     xticks=(1:12, ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]),
-    legend=:bottomright,
+    legend=:bottomright, 
+    grid=:xy,
     size=(900, 600)
 )
 
 save_plot(p_cont, joinpath(plot_dir, "comparaison_cotier_central.png"))
+println("Terminé ! Le graphique est disponible dans : ", joinpath(plot_dir, "comparaison_cotier_central.png"))
