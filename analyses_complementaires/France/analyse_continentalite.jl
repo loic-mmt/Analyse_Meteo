@@ -1,6 +1,4 @@
-# ================================================================================================
 # ANALYSE DE LA CONTINENTALITÉ (Points Côtiers vs Centraux)
-# ================================================================================================
 
 # 1. Configuration des chemins et chargement
 project_dir = abspath(joinpath(@__DIR__, "..", ".."))
@@ -50,14 +48,10 @@ function finalize_cube(sums_dict, counts_dict, weights, mode)
 end
 
 # 3. CALCUL DE LA CLIMATOLOGIE
-println("Étape 1 : Calcul de la climatologie mensuelle (1950-2025)...")
+println("Calcul de la climatologie mensuelle (1950-2025)...")
 matrix_saison = compute_general_climatology(data_folder_basic, fichier_poids_france, 1950:2025, mode=:monthly)
 
-# 4. IDENTIFICATION DES POINTS (Sécurité BoundsError)
-println("Étape 2 : Identification des points sur la grille ", size(matrix_saison)[1:2], "...")
-
-# On crée un masque binaire à partir des données réelles pour être sûr de ne pas sortir des bornes
-# Si un pixel contient au moins une valeur numérique sur la période, c'est de la terre.
+# 4. IDENTIFICATION DES POINTS 
 mask_data = [all(isnan.(matrix_saison[i, j, :])) ? 0.0 : 1.0 for i in 1:size(matrix_saison,1), j in 1:size(matrix_saison,2)]
 
 indices_terre = findall(mask_data .== 1.0)
@@ -109,4 +103,3 @@ plot!(p_cont, 1:12, cycle_central,
 )
 
 save_plot(p_cont, joinpath(plot_dir, "comparaison_cotier_central.png"))
-println("Terminé ! Le graphique est disponible dans : ", joinpath(plot_dir, "comparaison_cotier_central.png"))
