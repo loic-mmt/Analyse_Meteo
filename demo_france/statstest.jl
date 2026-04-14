@@ -27,6 +27,13 @@ cor(vect_vars, vect_means)
 # Pas de corrélation entre moyenne et variance.
 
 
+using NPZ
+npzwrite("month_mean_serie.npy", monthly_mean_series)
+npzwrite("cycle_serie.npy", z_french_cycle)
+npzwrite("ea_serie.npy", z_empirical_ea)
+npzwrite("nao_serie.npy", z_empirical_nao)
+
+
 # Initilisation des vecteurs (jours/mois/années)
 matrix_days = compute_general_climatology(data_folder_basic, weight_prop_basic, 1950:2025, mode=:daily)
 matrix_months = compute_general_climatology(data_folder_basic, weight_prop_basic, 1950:2025, mode=:monthly)
@@ -488,7 +495,7 @@ df_dual = DataFrame(
 # ==============================================================================
 # 2. GENERATE THE OCEANIC MEMORY VECTOR
 # ==============================================================================
-lag_ocean = 135
+lag_ocean = 80
 
 # Shift the NAO array forward by 135 months, padding the start with missing values
 df_dual.NAO_Lag135 = [fill(missing, lag_ocean); z_empirical_nao[1:end-lag_ocean]]
@@ -511,7 +518,7 @@ println("Total Variance Explained (R²): ", r2(dual_forcing_model))
 # Generate the predictive model's internal timeline
 predicted_french_climate = predict(dual_forcing_model)
 
-time_axis_model = 136:912
+time_axis_model = 81:912
 
 # Extract the actual values the model was trying to predict directly from the clean dataframe
 actual_french_climate = df_model.French_Temp
