@@ -13,9 +13,6 @@ cd(project_dir)
 plot_dir = joinpath(@__DIR__, "plot")
 isdir(plot_dir) || mkpath(plot_dir)
 
-# Utilisation du masque de 31km 
-fichier_poids_france = joinpath(project_dir, "data", "masks", "weights_france_31.nc")
-
 # 2. REDÉFINITION DES FONCTIONS 
 function finalize_cube(sums_dict, counts_dict, weights, mode)
     all_keys = sort(collect(keys(sums_dict)))
@@ -49,7 +46,7 @@ end
 
 # 3. CALCUL DE LA CLIMATOLOGIE
 println("Calcul de la climatologie mensuelle (1950-2025)...")
-matrix_saison = compute_general_climatology(data_folder_basic, fichier_poids_france, 1950:2025, mode=:monthly)
+matrix_saison = compute_general_climatology(data_folder_basic, weight_prop_basic, 1950:2025, mode=:monthly)
 
 # 4. IDENTIFICATION DES POINTS 
 mask_data = [all(isnan.(matrix_saison[i, j, :])) ? 0.0 : 1.0 for i in 1:size(matrix_saison,1), j in 1:size(matrix_saison,2)]

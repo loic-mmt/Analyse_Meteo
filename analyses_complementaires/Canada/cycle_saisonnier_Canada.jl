@@ -1,4 +1,4 @@
-# ANALYSE SAISONNIÈRE ET ÉVOLUTION DES TEMPÉRATURES (FRANCE)
+# ANALYSE SAISONNIÈRE ET ÉVOLUTION DES TEMPÉRATURES (CANADA)
 
 # 1. Configuration des chemins
 project_dir = abspath(joinpath(@__DIR__, "..", ".."))

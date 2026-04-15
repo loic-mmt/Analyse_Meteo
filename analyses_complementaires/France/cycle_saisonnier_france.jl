@@ -11,9 +11,6 @@ cd(project_dir)
 plot_dir = joinpath(@__DIR__, "plot")
 isdir(plot_dir) || mkpath(plot_dir)
 
-# --- UTILISATION DIRECTE DU MASQUE DE RÉFÉRENCE ---
-fichier_poids_france = joinpath(project_dir, "data", "masks", "weights_france_31.nc")
-
 # 2. REDÉFINITION DES FONCTIONS (Sécurité Dimensions et Kelvins)
 function finalize_cube(sums_dict, counts_dict, weights, mode)
     all_keys = sort(collect(keys(sums_dict)))
@@ -67,12 +64,12 @@ end
 # 3. ANALYSE : COMPARAISON DES CYCLES (1950-1980 vs 1995-2025)
 println("Calcul des cycles saisonniers...")
 
-m_old = compute_general_climatology(data_folder_basic, fichier_poids_france, 1950:1985, mode=:monthly)
-v_old = means_vector_calculation(m_old, fichier_poids_france)
+m_old = compute_general_climatology(data_folder_basic, weight_prop_basic, 1950:1985, mode=:monthly)
+v_old = means_vector_calculation(m_old, weight_prop_basic)
 cycle_old = mean(reshape(v_old, 12, :), dims=2)[:, 1]
 
-m_recent = compute_general_climatology(data_folder_basic, fichier_poids_france, 1986:2025, mode=:monthly)
-v_recent = means_vector_calculation(m_recent, fichier_poids_france)
+m_recent = compute_general_climatology(data_folder_basic, weight_prop_basic, 1986:2025, mode=:monthly)
+v_recent = means_vector_calculation(m_recent, weight_prop_basic)
 cycle_recent = mean(reshape(v_recent, 12, :), dims=2)[:, 1]
 
 p_comp = plot(1:12, cycle_old, label="1950-1985", ls=:dash, lw=3, color=:blue)
@@ -97,8 +94,8 @@ saisons = [
 
 plots_saisons = []
 for s in saisons
-    m = compute_general_climatology(data_folder_basic, fichier_poids_france, years_saison, mode=:yearly, selected_months=s.months)
-    v = means_vector_calculation(m, fichier_poids_france)
+    m = compute_general_climatology(data_folder_basic, weight_prop_basic, years_saison, mode=:yearly, selected_months=s.months)
+    v = means_vector_calculation(m, weight_prop_basic)
     p = plot(years_saison, v, title="$(s.name)", color=s.col, lw=2, legend=false)
     push!(plots_saisons, p)
 end
