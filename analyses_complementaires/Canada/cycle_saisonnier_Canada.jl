@@ -19,7 +19,7 @@ m_old = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1950:19
 v_old = means_vector_calculation(m_old, weight_canada_31)
 cycle_old = mean(reshape(v_old, 12, :), dims=2)[:, 1]
 
-m_recent = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025, mode=:monthly)
+m_recent = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1986:2025, mode=:monthly)
 v_recent = means_vector_calculation(m_recent, weight_canada_31)
 cycle_recent = mean(reshape(v_recent, 12, :), dims=2)[:, 1]
 
