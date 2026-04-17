@@ -781,6 +781,146 @@ end
 
 
 # ================================================================================================
+# Sorties annuelles (GIF + courbe)
+# ================================================================================================
+
+"""
+    compute_annual_cold_days_maps_streaming(...)
+
+Calcule, pour chaque année, une carte du nombre de jours de grand froid par pixel.
+Retourne :
+- `annual_days_maps` de taille `[lon, lat, year]`
+- `annual_mean_days` : moyenne des jours par pixel pour chaque année
+"""
+function compute_annual_cold_days_maps_streaming(
+    data_folder::String,
+    weights_file::String,
+    year_range;
+    cold_mode::Symbol=:orange,
+    selected_months=collect(1:12),
+    variable_name::String="t2m",
+    min_consecutive_days::Int=1
+)
+    mode = normalize_cold_mode(cold_mode)
+    years = year_range isa Integer ? [year_range] : collect(year_range)
+    n_years = length(years)
+    n_years == 0 && error("year_range est vide.")
+
+    annual_days_maps = nothing
+    annual_mean_days = Vector{Float64}(undef, n_years)
+
+    for (k, y) in enumerate(years)
+        yearly_hours = calculate_cold_days_streaming(
+            data_folder,
+            weights_file,
+            y:y;
+            cold_mode=mode,
+            selected_months=selected_months,
+            variable_name=variable_name,
+            min_consecutive_days=min_consecutive_days
+        )
+        yearly_days = yearly_hours ./ 24.0
+
+        if isnothing(annual_days_maps)
+            annual_days_maps = Array{Float64}(undef, size(yearly_days, 1), size(yearly_days, 2), n_years)
+        end
+        annual_days_maps[:, :, k] = yearly_days
+
+        vals = yearly_days[.!isnan.(yearly_days)]
+        annual_mean_days[k] = isempty(vals) ? NaN : (sum(vals) / length(vals))
+        print_progress("Grand froid annuel", k, n_years)
+    end
+
+    return annual_days_maps, annual_mean_days, years
+end
+
+"""
+    save_annual_maps_gif(...)
+
+Crée un GIF (1 frame/an) à partir d'une série de cartes annuelles.
+"""
+function save_annual_maps_gif(
+    annual_maps::Array{Float64, 3},
+    years::AbstractVector{<:Integer},
+    weights_file::String,
+    gif_file::String;
+    title_prefix::AbstractString="Grand froid (jours/pixel)",
+    palette=:inferno,
+    outline::Bool=true,
+    fps::Int=4
+)
+    ds = NCDataset(weights_file)
+    weights = ds["weights_frac"][:, :]
+    lats = ds["latitude"][:]
+    lons = ds["longitude"][:]
+    close(ds)
+
+    outline_segments = outline ? load_outline_segments(FRANCE_SHP) : Tuple{Vector{Float64}, Vector{Float64}}[]
+    first_map = annual_maps[:, :, 1]'
+    mask = country_mask_for_map(weights, size(first_map))
+    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, first_map)
+
+    valid_data = annual_maps[.!isnan.(annual_maps)]
+    isempty(valid_data) && error("Aucune valeur valide dans annual_maps pour générer le GIF.")
+    min_val, max_val = extrema(valid_data)
+
+    anim = @animate for i in eachindex(years)
+        current_map = annual_maps[:, :, i]'
+        current_map[.!mask] .= NaN
+        z_plot = current_map[lat_idx, lon_idx]
+
+        p = heatmap(
+            x_plot,
+            y_plot,
+            z_plot,
+            title="$(title_prefix) - $(years[i])",
+            clims=(min_val, max_val),
+            c=palette,
+            xlabel="Longitude",
+            ylabel="Latitude",
+            aspect_ratio=:equal,
+            right_margin=5Plots.mm,
+            yflip=false
+        )
+        if outline
+            add_country_outline!(p, outline_segments)
+        end
+        p
+    end
+
+    gif(anim, gif_file, fps=fps)
+    return gif_file
+end
+
+"""
+    save_annual_curve(...)
+
+Sauvegarde une courbe annuelle (moyenne des jours de grand froid par pixel).
+"""
+function save_annual_curve(
+    years::AbstractVector{<:Integer},
+    annual_mean_days::AbstractVector{<:Real},
+    curve_file::String;
+    title::AbstractString="Grand froid - jours moyens par pixel et par année",
+    ylabel::AbstractString="Jours de grand froid / pixel"
+)
+    p = plot(
+        collect(years),
+        collect(annual_mean_days),
+        linewidth=2.0,
+        marker=:circle,
+        markersize=3,
+        xlabel="Année",
+        ylabel=ylabel,
+        title=title,
+        legend=false
+    )
+    save_plot(p, curve_file)
+    return p
+end
+
+
+# ================================================================================================
 # Exécution script
 # ================================================================================================
 
@@ -801,9 +941,13 @@ function run_grand_froid_heatmap(;
     year_range=1950:2025,
     selected_months=collect(1:12),
     output_file::Union{Nothing, String}=nothing,
+    output_gif_file::Union{Nothing, String}=nothing,
+    output_curve_file::Union{Nothing, String}=nothing,
     cold_mode::Symbol=:orange,
     outline::Bool=true,
-    min_consecutive_days::Int=1
+    min_consecutive_days::Int=1,
+    make_gif::Bool=true,
+    make_curve::Bool=true
 )
     mode = normalize_cold_mode(cold_mode)
     mode_txt = cold_mode_label(mode)
@@ -834,6 +978,44 @@ function run_grand_froid_heatmap(;
     )
     save_plot(p, output_file)
     println("Saved heatmap to: $output_file")
+
+    if make_gif || make_curve
+        println("Step 3: Annual maps/curve...")
+        annual_days_maps, annual_mean_days, years = compute_annual_cold_days_maps_streaming(
+            data_folder,
+            weights_file,
+            year_range;
+            cold_mode=mode,
+            selected_months=selected_months,
+            variable_name="t2m",
+            min_consecutive_days=min_consecutive_days
+        )
+
+        if make_gif
+            gif_file = isnothing(output_gif_file) ? joinpath(plot_dir, "heatmap_grand_froid_annual_$(mode_txt)_$(first(years))_$(last(years)).gif") : output_gif_file
+            save_annual_maps_gif(
+                annual_days_maps,
+                years,
+                weights_file,
+                gif_file;
+                title_prefix="Grand froid $(mode_txt) (jours/pixel)",
+                outline=outline
+            )
+            println("Saved annual GIF to: $gif_file")
+        end
+
+        if make_curve
+            curve_file = isnothing(output_curve_file) ? joinpath(plot_dir, "courbe_grand_froid_annual_$(mode_txt)_$(first(years))_$(last(years)).png") : output_curve_file
+            save_annual_curve(
+                years,
+                annual_mean_days,
+                curve_file;
+                title="Grand froid $(mode_txt) - jours moyens par pixel et par année",
+                ylabel="Jours de grand froid / pixel"
+            )
+            println("Saved annual curve to: $curve_file")
+        end
+    end
 
     return cold_hours, p
 end
