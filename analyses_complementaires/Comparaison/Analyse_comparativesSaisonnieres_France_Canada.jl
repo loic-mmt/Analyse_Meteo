@@ -84,7 +84,7 @@ p_comp_final = plot(plots_saisons_comp..., layout=(2, 2), size=(1200, 800),
                   plot_title="Comparaison des anomalies par saison : France vs Canada (Réf: 1960-1990)")
 
 # Sauvegarde
-output_file = joinpath(plot_dir, "anomalies_saisonnieres_comparees_FR_CA.png")
+output_file = joinpath(plot_dir, "anomalies_comparees_FR_CA.png")
 save_plot(p_comp_final, output_file)
 
 println("Graphique sauvegardé avec succès dans : ", output_file)
