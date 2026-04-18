@@ -31,17 +31,13 @@ plot!(p_comp, 1:12, cycle_recent, label="1986-2025", lw=3, color=:red,
 
 save_plot(p_comp, joinpath(plot_dir, "comparaison_saisonniere_france.png"))
 
-# 4. ÉVOLUTION DES ANOMALIES PAR SAISON (1950-2025)
+
+# 3. ÉVOLUTION DES ANOMALIES PAR SAISON (1950-2025)
 println("Calcul des anomalies par saison...")
 years_saison = 1950:2025
-
-# Définition de la période de référence
 ref_period = 1960:1990
-
-# Trouver les indices correspondant à cette période dans notre vecteur d'années
 idx_ref = findall(y -> y in ref_period, years_saison)
 
-# Extraction groupée par saison
 saisons = [
     (name="Hiver", months=[12, 1, 2], col=:blue),
     (name="Printemps", months=[3, 4, 5], col=:green),
@@ -51,32 +47,66 @@ saisons = [
 
 plots_saisons = []
 for s in saisons
-    # 1. Récupérer les températures absolues pour toute la période (1950-2025)
     m = compute_general_climatology(data_folder_basic, weight_prop_basic, years_saison, mode=:yearly, selected_months=s.months)
     v_abs = means_vector_calculation(m, weight_prop_basic)
     
-    # 2. Calculer la "Normale" (moyenne) sur la période de référence
     baseline = mean(v_abs[idx_ref])
-    
-    # 3. Calculer les anomalies (Valeur absolue - Normale)
     v_anom = v_abs .- baseline
     
-    # 4. Créer le graphique
     p = plot(years_saison, v_anom, 
-             title="$(s.name)", 
-             color=s.col, 
-             lw=2, 
-             legend=false,
-             ylabel="Anomalie (°C)")
-             
-    # Ajouter une ligne horizontale à 0 pour bien visualiser la référence
+             title="$(s.name)", color=s.col, lw=2, legend=false, ylabel="Anomalie (°C)")
     hline!(p, [0], color=:black, ls=:dash, lw=1.5)
     
     push!(plots_saisons, p)
 end
 
-# Assembler les 4 graphiques
 p_4saisons = plot(plots_saisons..., layout=(2, 2), size=(1000, 700),
                   plot_title="Anomalies de température par saison (Réf: 1960-1990)")
 
 save_plot(p_4saisons, joinpath(plot_dir, "courbe_anomalies_4saisons_france.png"))
+
+
+# Courbe anomalie temperature
+window = 5  # taille de lissage
+
+plots_saisons = []
+for s in saisons
+    m = compute_general_climatology(data_folder_basic, weight_prop_basic,
+                                   years_saison,
+                                   mode=:yearly,
+                                   selected_months=s.months)
+
+    v = means_vector_calculation(m, weight_prop_basic)
+
+    # 🔹 Indices période de référence
+    idx_ref = findall(y -> y in 1960:1990, years_saison)
+
+    # 🔹 Moyenne climatologique
+    ref_mean = mean(v[idx_ref])
+
+    # 🔹 Anomalies
+    anomalies = v .- ref_mean
+
+    # 🔹 Courbe de référence lissée (sur période 1960-1990 uniquement)
+    ref_values = v[idx_ref]
+
+    ref_smooth = [mean(ref_values[max(1,i-window):min(length(ref_values),i+window)])
+                  for i in eachindex(ref_values)]
+
+    # 🔹 Étendre la courbe sur toute la période
+    ref_curve_full = fill(NaN, length(years_saison))
+    ref_curve_full[idx_ref] .= ref_smooth
+
+    # 🔹 Plot
+    p = plot(years_saison, anomalies,
+             color=s.col, lw=2, label="Anomalies")
+
+    plot!(years_saison, ref_curve_full .- ref_mean,
+          color=:black, lw=2, linestyle=:dash, label="Réf 1960-1990 (lissée)")
+
+    push!(plots_saisons, p)
+end
+
+p_4saisons_2 = plot(plots_saisons..., layout=(2, 2), size=(1000, 700))
+
+save_plot(p_4saisons_2, joinpath(plot_dir, "Anomalies_saisonniere_france.png"))
