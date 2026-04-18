@@ -13,42 +13,12 @@ cd(project_dir)
 plot_dir = joinpath(@__DIR__, "plot")
 isdir(plot_dir) || mkpath(plot_dir)
 
-# 2. REDÉFINITION DES FONCTIONS 
-function finalize_cube(sums_dict, counts_dict, weights, mode)
-    all_keys = sort(collect(keys(sums_dict)))
-    valid_keys = filter(k -> any(counts_dict[k] .> 0), all_keys)
-    
-    if isempty(valid_keys)
-        return Array{Float64}(undef, 0, 0, 0), []
-    end
 
-    n_lon, n_lat = size(sums_dict[valid_keys[1]])
-    
-    # Alignement du masque
-    if size(weights) == (n_lon, n_lat)
-        w_final = weights
-    elseif size(weights') == (n_lon, n_lat)
-        w_final = weights'
-    else
-        w_final = ones(n_lon, n_lat)
-    end
-
-    visual_mask = [w > 0.05 ? 1.0 : NaN for w in w_final]
-
-    final_3d = zeros(Float64, n_lon, n_lat, length(valid_keys))
-    for (i, k) in enumerate(valid_keys)
-        # Moyenne et conversion Kelvin -> Celsius
-        mean_grid = (sums_dict[k] ./ counts_dict[k]) .- 273.15
-        final_3d[:, :, i] = mean_grid .* visual_mask
-    end
-    return final_3d, valid_keys
-end
-
-# 3. CALCUL DE LA CLIMATOLOGIE
+# 2. CALCUL DE LA CLIMATOLOGIE
 println("Calcul de la climatologie mensuelle (1950-2025)...")
 matrix_saison = compute_general_climatology(data_folder_basic, weight_prop_basic, 1950:2025, mode=:monthly)
 
-# 4. IDENTIFICATION DES POINTS 
+# 3. IDENTIFICATION DES POINTS 
 mask_data = [all(isnan.(matrix_saison[i, j, :])) ? 0.0 : 1.0 for i in 1:size(matrix_saison,1), j in 1:size(matrix_saison,2)]
 
 indices_terre = findall(mask_data .== 1.0)
@@ -69,7 +39,7 @@ idx_central = indices_terre[argmin(dist_centre)]
 
 println("Points identifiés : Côtier $idx_cotier | Central $idx_central")
 
-# 5. EXTRACTION ET CALCUL DU CYCLE MOYEN
+# 4. EXTRACTION ET CALCUL DU CYCLE MOYEN
 # Extraction des séries temporelles
 serie_cotier  = matrix_saison[idx_cotier[1], idx_cotier[2], :]
 serie_central = matrix_saison[idx_central[1], idx_central[2], :]
@@ -82,7 +52,7 @@ cycle_central = mean(reshape(serie_central, 12, :), dims=2)[:, 1]
 amp_cotier  = round(maximum(cycle_cotier) - minimum(cycle_cotier), digits=1)
 amp_central = round(maximum(cycle_central) - minimum(cycle_central), digits=1)
 
-# 6. GRAPHIQUE FINAL
+# 5. GRAPHIQUE FINAL
 println("Étape 3 : Génération du graphique...")
 p_cont = plot(1:12, cycle_cotier, 
     label="Côtier - Amplitude: $(amp_cotier)°C", 

@@ -50,6 +50,6 @@ for s in saisons
 end
 
 p_4saisons = plot(plots_saisons..., layout=(2, 2), size=(1000, 700),
-                  plot_title="Évolution des températures par saison (1950-2025)")
+                  plot_title="Évolution des températures par saison (1950-2025) au Canada")
 
 save_plot(p_4saisons, joinpath(plot_dir, "evolution_4saisons_canada.png"))

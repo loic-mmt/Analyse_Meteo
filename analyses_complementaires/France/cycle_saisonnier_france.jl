@@ -11,55 +11,6 @@ cd(project_dir)
 plot_dir = joinpath(@__DIR__, "plot")
 isdir(plot_dir) || mkpath(plot_dir)
 
-# 2. REDÉFINITION DES FONCTIONS (Sécurité Dimensions et Kelvins)
-function finalize_cube(sums_dict, counts_dict, weights, mode)
-    all_keys = sort(collect(keys(sums_dict)))
-    valid_keys = filter(k -> any(counts_dict[k] .> 0), all_keys)
-    
-    if isempty(valid_keys)
-        return Array{Float64}(undef, 0, 0, 0), []
-    end
-
-    n_lon, n_lat = size(sums_dict[valid_keys[1]])
-    
-    # Alignement automatique du masque (transposition si nécessaire)
-    if size(weights) == (n_lon, n_lat)
-        aligned_weights = weights
-    elseif size(weights') == (n_lon, n_lat)
-        aligned_weights = weights'
-    else
-        aligned_weights = ones(Float64, n_lon, n_lat) 
-    end
-
-    visual_mask = [w > 0.0 ? 1.0 : NaN for w in aligned_weights]
-
-    final_3d = zeros(Float64, n_lon, n_lat, length(valid_keys))
-    for (i, k) in enumerate(valid_keys)
-        mean_grid = (sums_dict[k] ./ counts_dict[k]) .- 273.15
-        final_3d[:, :, i] = mean_grid .* visual_mask
-    end
-    return final_3d, valid_keys
-end
-
-function means_vector_calculation(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file::String)
-    temp_means = Float64[]
-    n_time = size(data_3d, 3)
-
-    for t in 1:n_time
-        # On extrait la tranche temporelle (la carte de France à l'instant t)
-        map_slice = data_3d[:, :, t]
-    
-        valid_pixels = filter(!isnan, map_slice)
-        
-        if !isempty(valid_pixels)
-            # On fait la moyenne arithmétique simple des pixels de terre
-            push!(temp_means, mean(valid_pixels))
-        else
-            push!(temp_means, NaN)
-        end
-    end
-    return temp_means
-end
 
 # 3. ANALYSE : COMPARAISON DES CYCLES (1950-1980 vs 1995-2025)
 println("Calcul des cycles saisonniers...")
@@ -80,9 +31,15 @@ plot!(p_comp, 1:12, cycle_recent, label="1986-2025", lw=3, color=:red,
 
 save_plot(p_comp, joinpath(plot_dir, "comparaison_saisonniere_france.png"))
 
-# 4. ÉVOLUTION DES 4 SAISONS (1950-2025)
-println("Calcul de l'évolution des saisons...")
+# 4. ÉVOLUTION DES ANOMALIES PAR SAISON (1950-2025)
+println("Calcul des anomalies par saison...")
 years_saison = 1950:2025
+
+# Définition de la période de référence
+ref_period = 1960:1990
+
+# Trouver les indices correspondant à cette période dans notre vecteur d'années
+idx_ref = findall(y -> y in ref_period, years_saison)
 
 # Extraction groupée par saison
 saisons = [
@@ -94,13 +51,32 @@ saisons = [
 
 plots_saisons = []
 for s in saisons
+    # 1. Récupérer les températures absolues pour toute la période (1950-2025)
     m = compute_general_climatology(data_folder_basic, weight_prop_basic, years_saison, mode=:yearly, selected_months=s.months)
-    v = means_vector_calculation(m, weight_prop_basic)
-    p = plot(years_saison, v, title="$(s.name)", color=s.col, lw=2, legend=false)
+    v_abs = means_vector_calculation(m, weight_prop_basic)
+    
+    # 2. Calculer la "Normale" (moyenne) sur la période de référence
+    baseline = mean(v_abs[idx_ref])
+    
+    # 3. Calculer les anomalies (Valeur absolue - Normale)
+    v_anom = v_abs .- baseline
+    
+    # 4. Créer le graphique
+    p = plot(years_saison, v_anom, 
+             title="$(s.name)", 
+             color=s.col, 
+             lw=2, 
+             legend=false,
+             ylabel="Anomalie (°C)")
+             
+    # Ajouter une ligne horizontale à 0 pour bien visualiser la référence
+    hline!(p, [0], color=:black, ls=:dash, lw=1.5)
+    
     push!(plots_saisons, p)
 end
 
+# Assembler les 4 graphiques
 p_4saisons = plot(plots_saisons..., layout=(2, 2), size=(1000, 700),
-                  plot_title="Évolution des températures par saison (1950-2025)")
+                  plot_title="Anomalies de température par saison (Réf: 1960-1990)")
 
-save_plot(p_4saisons, joinpath(plot_dir, "evolution_4saisons_france.png"))
+save_plot(p_4saisons, joinpath(plot_dir, "courbe_anomalies_4saisons_france.png"))
