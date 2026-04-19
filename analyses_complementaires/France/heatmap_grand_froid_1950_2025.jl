@@ -61,6 +61,50 @@ function print_progress(prefix::AbstractString, current::Int, total::Int; width:
     end
 end
 
+"""
+    compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
+
+Calcule en place Tmax/Tmin journaliers et un masque de validité pixel, avec
+conversion optionnelle Kelvin -> Celsius. Conçu pour limiter les allocations.
+"""
+function compute_day_stats!(
+    day_cube,
+    day_max::Matrix{Float64},
+    day_min::Matrix{Float64},
+    valid_day::BitMatrix;
+    kelvin_to_celsius::Bool=true
+)
+    fill!(day_max, -Inf)
+    fill!(day_min, Inf)
+    fill!(valid_day, true)
+
+    @inbounds for h in axes(day_cube, 3)
+        frame = @view day_cube[:, :, h]
+        for j in axes(frame, 2)
+            for i in axes(frame, 1)
+                v0 = frame[i, j]
+                if ismissing(v0)
+                    valid_day[i, j] = false
+                    continue
+                end
+                v = Float64(v0)
+                kelvin_to_celsius && (v -= 273.15)
+                if isnan(v)
+                    valid_day[i, j] = false
+                    continue
+                end
+                if v > day_max[i, j]
+                    day_max[i, j] = v
+                end
+                if v < day_min[i, j]
+                    day_min[i, j] = v
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 
 # ================================================================================================
 # Contours et masque France
@@ -579,9 +623,13 @@ end
 Ajoute les séquences encore ouvertes à la fin d'un bloc temporel.
 """
 function finalize_open_runs!(run_len::AbstractMatrix{<:Integer}, event_days::AbstractMatrix{<:Integer}, min_consecutive_days::Int)
-    tail = run_len .>= min_consecutive_days
-    if any(tail)
-        event_days[tail] .+= run_len[tail]
+    @inbounds for j in axes(run_len, 2)
+        for i in axes(run_len, 1)
+            rl = run_len[i, j]
+            if rl >= min_consecutive_days
+                event_days[i, j] += rl
+            end
+        end
     end
     return nothing
 end
@@ -642,6 +690,9 @@ function calculate_cold_days_streaming(
 
     run_len = zeros(Int16, n_lon, n_lat)
     cold_days_count = zeros(Int32, n_lon, n_lat)
+    day_max = zeros(Float64, n_lon, n_lat)
+    day_min = zeros(Float64, n_lon, n_lat)
+    valid_day = falses(n_lon, n_lat)
 
     total_steps = length(year_range) * length(selected_months)
     step = 0
@@ -662,42 +713,142 @@ function calculate_cold_days_streaming(
 
             for file in files
                 NCDataset(file) do ds
-                    times = ds["valid_time"][:]
-                    n_t = length(times)
-                    k = 1
+                    n_t = size(ds[variable_name], 3)
+                    n_full_days = fld(n_t, day_hours)
+                    day_start = 1
 
-                    while k <= n_t
-                        current_day = Date(times[k])
-                        k2 = k
-                        while k2 <= n_t && Date(times[k2]) == current_day
-                            k2 += 1
+                    if mode == :jaune
+                        for _ in 1:n_full_days
+                            day_end = day_start + day_hours - 1
+                            idx = day_start:day_end
+                            day_cube = ds[variable_name][:, :, idx]
+                            compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
+
+                            @inbounds for j in 1:n_lat
+                                for i in 1:n_lon
+                                    event = land_mask[i, j] && valid_day[i, j] &&
+                                            (day_max[i, j] <= 0.0) &&
+                                            (day_min[i, j] <= -5.0) &&
+                                            (day_min[i, j] > -10.0)
+                                    if event
+                                        run_len[i, j] += 1
+                                    else
+                                        if run_len[i, j] >= min_consecutive_days
+                                            cold_days_count[i, j] += run_len[i, j]
+                                        end
+                                        run_len[i, j] = 0
+                                    end
+                                end
+                            end
+
+                            day_start = day_end + 1
                         end
-                        idx = k:(k2 - 1)
+                    elseif mode == :orange
+                        for _ in 1:n_full_days
+                            day_end = day_start + day_hours - 1
+                            idx = day_start:day_end
+                            day_cube = ds[variable_name][:, :, idx]
+                            compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
 
+                            @inbounds for j in 1:n_lat
+                                for i in 1:n_lon
+                                    event = land_mask[i, j] && valid_day[i, j] &&
+                                            (day_min[i, j] <= -10.0) &&
+                                            (day_min[i, j] > -18.0)
+                                    if event
+                                        run_len[i, j] += 1
+                                    else
+                                        if run_len[i, j] >= min_consecutive_days
+                                            cold_days_count[i, j] += run_len[i, j]
+                                        end
+                                        run_len[i, j] = 0
+                                    end
+                                end
+                            end
+
+                            day_start = day_end + 1
+                        end
+                    else
+                        for _ in 1:n_full_days
+                            day_end = day_start + day_hours - 1
+                            idx = day_start:day_end
+                            day_cube = ds[variable_name][:, :, idx]
+                            compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
+
+                            @inbounds for j in 1:n_lat
+                                for i in 1:n_lon
+                                    event = land_mask[i, j] && valid_day[i, j] &&
+                                            (day_min[i, j] <= -18.0)
+                                    if event
+                                        run_len[i, j] += 1
+                                    else
+                                        if run_len[i, j] >= min_consecutive_days
+                                            cold_days_count[i, j] += run_len[i, j]
+                                        end
+                                        run_len[i, j] = 0
+                                    end
+                                end
+                            end
+
+                            day_start = day_end + 1
+                        end
+                    end
+
+                    # Fallback robuste si un fichier contient une journée incomplète en fin.
+                    if day_start <= n_t
+                        idx = day_start:n_t
                         day_cube = ds[variable_name][:, :, idx]
-                        day_vals = Float64.(coalesce.(day_cube, NaN)) .- 273.15
-                        day_max = dropdims(maximum(day_vals, dims=3), dims=3)
-                        day_min = dropdims(minimum(day_vals, dims=3), dims=3)
-                        valid_day = dropdims(all(.!isnan.(day_vals), dims=3), dims=3)
+                        compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
 
-                        cold_day = valid_day .& land_mask
                         if mode == :jaune
-                            cold_day .&= (day_max .<= 0.0) .& (day_min .<= -5.0) .& (day_min .> -10.0)
+                            @inbounds for j in 1:n_lat
+                                for i in 1:n_lon
+                                    event = land_mask[i, j] && valid_day[i, j] &&
+                                            (day_max[i, j] <= 0.0) &&
+                                            (day_min[i, j] <= -5.0) &&
+                                            (day_min[i, j] > -10.0)
+                                    if event
+                                        run_len[i, j] += 1
+                                    else
+                                        if run_len[i, j] >= min_consecutive_days
+                                            cold_days_count[i, j] += run_len[i, j]
+                                        end
+                                        run_len[i, j] = 0
+                                    end
+                                end
+                            end
                         elseif mode == :orange
-                            cold_day .&= (day_min .<= -10.0) .& (day_min .> -18.0)
+                            @inbounds for j in 1:n_lat
+                                for i in 1:n_lon
+                                    event = land_mask[i, j] && valid_day[i, j] &&
+                                            (day_min[i, j] <= -10.0) &&
+                                            (day_min[i, j] > -18.0)
+                                    if event
+                                        run_len[i, j] += 1
+                                    else
+                                        if run_len[i, j] >= min_consecutive_days
+                                            cold_days_count[i, j] += run_len[i, j]
+                                        end
+                                        run_len[i, j] = 0
+                                    end
+                                end
+                            end
                         else
-                            cold_day .&= (day_min .<= -18.0)
+                            @inbounds for j in 1:n_lat
+                                for i in 1:n_lon
+                                    event = land_mask[i, j] && valid_day[i, j] &&
+                                            (day_min[i, j] <= -18.0)
+                                    if event
+                                        run_len[i, j] += 1
+                                    else
+                                        if run_len[i, j] >= min_consecutive_days
+                                            cold_days_count[i, j] += run_len[i, j]
+                                        end
+                                        run_len[i, j] = 0
+                                    end
+                                end
+                            end
                         end
-
-                        run_len[cold_day] .+= 1
-                        warm = .!cold_day
-                        ended = warm .& (run_len .>= min_consecutive_days)
-                        if any(ended)
-                            cold_days_count[ended] .+= run_len[ended]
-                        end
-                        run_len[warm] .= 0
-
-                        k = k2
                     end
                 end
             end
@@ -709,7 +860,13 @@ function calculate_cold_days_streaming(
     finalize_open_runs!(run_len, cold_days_count, min_consecutive_days)
 
     cold_hours_grid = fill(NaN, n_lon, n_lat)
-    cold_hours_grid[land_mask] .= cold_days_count[land_mask] .* day_hours
+    @inbounds for j in 1:n_lat
+        for i in 1:n_lon
+            if land_mask[i, j]
+                cold_hours_grid[i, j] = cold_days_count[i, j] * day_hours
+            end
+        end
+    end
     return cold_hours_grid
 end
 
@@ -826,8 +983,15 @@ function compute_annual_cold_days_maps_streaming(
         end
         annual_days_maps[:, :, k] = yearly_days
 
-        vals = yearly_days[.!isnan.(yearly_days)]
-        annual_mean_days[k] = isempty(vals) ? NaN : (sum(vals) / length(vals))
+        total = 0.0
+        n_valid = 0
+        @inbounds for v in yearly_days
+            if !isnan(v)
+                total += v
+                n_valid += 1
+            end
+        end
+        annual_mean_days[k] = n_valid == 0 ? NaN : (total / n_valid)
         print_progress("Grand froid annuel", k, n_years)
     end
 
@@ -956,17 +1120,35 @@ function run_grand_froid_heatmap(;
     println("Running heatmap pipeline...")
     println("Years: $(first(year_range)) -> $(last(year_range))")
     println("Mode grand froid: $mode_txt")
-    println("Step 1: Streaming grand-froid computation...")
+    annual_days_maps = nothing
+    annual_mean_days = nothing
+    years = nothing
 
-    cold_hours = calculate_cold_days_streaming(
-        data_folder,
-        weights_file,
-        year_range;
-        cold_mode=mode,
-        selected_months=selected_months,
-        variable_name="t2m",
-        min_consecutive_days=min_consecutive_days
-    )
+    if make_gif || make_curve
+        println("Step 1: Annual maps/curve data...")
+        annual_days_maps, annual_mean_days, years = compute_annual_cold_days_maps_streaming(
+            data_folder,
+            weights_file,
+            year_range;
+            cold_mode=mode,
+            selected_months=selected_months,
+            variable_name="t2m",
+            min_consecutive_days=min_consecutive_days
+        )
+        total_days_map = dropdims(sum(annual_days_maps, dims=3), dims=3)
+        cold_hours = total_days_map .* 24.0
+    else
+        println("Step 1: Streaming grand-froid computation...")
+        cold_hours = calculate_cold_days_streaming(
+            data_folder,
+            weights_file,
+            year_range;
+            cold_mode=mode,
+            selected_months=selected_months,
+            variable_name="t2m",
+            min_consecutive_days=min_consecutive_days
+        )
+    end
 
     println("Step 2: Rendering map...")
 
@@ -980,17 +1162,6 @@ function run_grand_froid_heatmap(;
     println("Saved heatmap to: $output_file")
 
     if make_gif || make_curve
-        println("Step 3: Annual maps/curve...")
-        annual_days_maps, annual_mean_days, years = compute_annual_cold_days_maps_streaming(
-            data_folder,
-            weights_file,
-            year_range;
-            cold_mode=mode,
-            selected_months=selected_months,
-            variable_name="t2m",
-            min_consecutive_days=min_consecutive_days
-        )
-
         if make_gif
             gif_file = isnothing(output_gif_file) ? joinpath(plot_dir, "heatmap_grand_froid_annual_$(mode_txt)_$(first(years))_$(last(years)).gif") : output_gif_file
             save_annual_maps_gif(

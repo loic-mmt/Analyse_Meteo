@@ -61,6 +61,50 @@ function print_progress(prefix::AbstractString, current::Int, total::Int; width:
     end
 end
 
+"""
+    compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
+
+Calcule en place Tmax/Tmin journaliers et un masque de validité pixel, avec
+conversion optionnelle Kelvin -> Celsius. Conçu pour limiter les allocations.
+"""
+function compute_day_stats!(
+    day_cube,
+    day_max::Matrix{Float64},
+    day_min::Matrix{Float64},
+    valid_day::BitMatrix;
+    kelvin_to_celsius::Bool=true
+)
+    fill!(day_max, -Inf)
+    fill!(day_min, Inf)
+    fill!(valid_day, true)
+
+    @inbounds for h in axes(day_cube, 3)
+        frame = @view day_cube[:, :, h]
+        for j in axes(frame, 2)
+            for i in axes(frame, 1)
+                v0 = frame[i, j]
+                if ismissing(v0)
+                    valid_day[i, j] = false
+                    continue
+                end
+                v = Float64(v0)
+                kelvin_to_celsius && (v -= 273.15)
+                if isnan(v)
+                    valid_day[i, j] = false
+                    continue
+                end
+                if v > day_max[i, j]
+                    day_max[i, j] = v
+                end
+                if v < day_min[i, j]
+                    day_min[i, j] = v
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 
 # ================================================================================================
 # Contours et masque France
@@ -547,9 +591,13 @@ end
 Ajoute les séquences encore ouvertes à la fin d'un bloc temporel.
 """
 function finalize_open_runs!(run_len::AbstractMatrix{<:Integer}, canicule_days::AbstractMatrix{<:Integer}, min_consecutive_days::Int)
-    tail = run_len .>= min_consecutive_days
-    if any(tail)
-        canicule_days[tail] .+= run_len[tail]
+    @inbounds for j in axes(run_len, 2)
+        for i in axes(run_len, 1)
+            rl = run_len[i, j]
+            if rl >= min_consecutive_days
+                canicule_days[i, j] += rl
+            end
+        end
     end
     return nothing
 end
@@ -616,6 +664,9 @@ function calculate_heat_days_streaming(
     # Etats persistants entre les jours (pour suivre les séquences consécutives).
     run_len = zeros(Int16, n_lon, n_lat)
     canicule_days = zeros(Int32, n_lon, n_lat)
+    day_max = zeros(Float64, n_lon, n_lat)
+    day_min = zeros(Float64, n_lon, n_lat)
+    valid_day = falses(n_lon, n_lat)
 
     total_steps = length(year_range) * length(selected_months)
     step = 0
@@ -637,37 +688,56 @@ function calculate_heat_days_streaming(
 
             for file in files
                 NCDataset(file) do ds
-                    times = ds["valid_time"][:]
-                    n_t = length(times)
-                    k = 1
+                    n_t = size(ds[variable_name], 3)
+                    n_full_days = fld(n_t, day_hours)
+                    day_start = 1
 
-                    while k <= n_t
-                        current_day = Date(times[k])
-                        k2 = k
-                        while k2 <= n_t && Date(times[k2]) == current_day
-                            k2 += 1
-                        end
-                        idx = k:(k2 - 1)
-
+                    for _ in 1:n_full_days
+                        day_end = day_start + day_hours - 1
+                        idx = day_start:day_end
                         day_cube = ds[variable_name][:, :, idx]
-                        # ERA5 `t2m` est en Kelvin: conversion explicite en Celsius
-                        # pour comparer correctement aux seuils 36°C / 21°C.
-                        day_vals = Float64.(coalesce.(day_cube, NaN)) .- 273.15
-                        day_max = dropdims(maximum(day_vals, dims=3), dims=3)
-                        day_min = dropdims(minimum(day_vals, dims=3), dims=3)
-                        valid_day = dropdims(all(.!isnan.(day_vals), dims=3), dims=3)
+                        compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
 
-                        hot_day = valid_day .& land_mask .& (day_max .> day_threshold) .& (day_min .> night_threshold)
-
-                        run_len[hot_day] .+= 1
-                        cold = .!hot_day
-                        ended = cold .& (run_len .>= min_consecutive_days)
-                        if any(ended)
-                            canicule_days[ended] .+= run_len[ended]
+                        @inbounds for j in 1:n_lat
+                            for i in 1:n_lon
+                                event = land_mask[i, j] && valid_day[i, j] &&
+                                        (day_max[i, j] > day_threshold) &&
+                                        (day_min[i, j] > night_threshold)
+                                if event
+                                    run_len[i, j] += 1
+                                else
+                                    if run_len[i, j] >= min_consecutive_days
+                                        canicule_days[i, j] += run_len[i, j]
+                                    end
+                                    run_len[i, j] = 0
+                                end
+                            end
                         end
-                        run_len[cold] .= 0
 
-                        k = k2
+                        day_start = day_end + 1
+                    end
+
+                    # Fallback robuste si un fichier contient une journée incomplète en fin.
+                    if day_start <= n_t
+                        idx = day_start:n_t
+                        day_cube = ds[variable_name][:, :, idx]
+                        compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
+
+                        @inbounds for j in 1:n_lat
+                            for i in 1:n_lon
+                                event = land_mask[i, j] && valid_day[i, j] &&
+                                        (day_max[i, j] > day_threshold) &&
+                                        (day_min[i, j] > night_threshold)
+                                if event
+                                    run_len[i, j] += 1
+                                else
+                                    if run_len[i, j] >= min_consecutive_days
+                                        canicule_days[i, j] += run_len[i, j]
+                                    end
+                                    run_len[i, j] = 0
+                                end
+                            end
+                        end
                     end
                 end
             end
@@ -680,7 +750,13 @@ function calculate_heat_days_streaming(
     finalize_open_runs!(run_len, canicule_days, min_consecutive_days)
 
     heat_hours_grid = fill(NaN, n_lon, n_lat)
-    heat_hours_grid[land_mask] .= canicule_days[land_mask] .* day_hours
+    @inbounds for j in 1:n_lat
+        for i in 1:n_lon
+            if land_mask[i, j]
+                heat_hours_grid[i, j] = canicule_days[i, j] * day_hours
+            end
+        end
+    end
     return heat_hours_grid
 end
 
@@ -798,8 +874,15 @@ function compute_annual_canicule_days_maps_streaming(
         end
         annual_days_maps[:, :, k] = yearly_days
 
-        vals = yearly_days[.!isnan.(yearly_days)]
-        annual_mean_days[k] = isempty(vals) ? NaN : (sum(vals) / length(vals))
+        total = 0.0
+        n_valid = 0
+        @inbounds for v in yearly_days
+            if !isnan(v)
+                total += v
+                n_valid += 1
+            end
+        end
+        annual_mean_days[k] = n_valid == 0 ? NaN : (total / n_valid)
         print_progress("Canicule annuel", k, n_years)
     end
 
@@ -924,18 +1007,38 @@ function run_canicule_heatmap(;
 )
     println("Running heatmap pipeline...")
     println("Years: $(first(year_range)) -> $(last(year_range))")
-    println("Step 1: Streaming canicule computation...")
+    annual_days_maps = nothing
+    annual_mean_days = nothing
+    years = nothing
 
-    heat_hours = calculate_heat_days_streaming(
-        data_folder,
-        weights_file,
-        year_range;
-        selected_months=selected_months,
-        variable_name="t2m",
-        day_threshold=day_threshold,
-        night_threshold=night_threshold,
-        min_consecutive_days=min_consecutive_days
-    )
+    if make_gif || make_curve
+        println("Step 1: Annual maps/curve data...")
+        annual_days_maps, annual_mean_days, years = compute_annual_canicule_days_maps_streaming(
+            data_folder,
+            weights_file,
+            year_range;
+            selected_months=selected_months,
+            variable_name="t2m",
+            day_threshold=day_threshold,
+            night_threshold=night_threshold,
+            min_consecutive_days=min_consecutive_days
+        )
+        # Total période = somme des jours annuels, puis conversion en heures.
+        total_days_map = dropdims(sum(annual_days_maps, dims=3), dims=3)
+        heat_hours = total_days_map .* 24.0
+    else
+        println("Step 1: Streaming canicule computation...")
+        heat_hours = calculate_heat_days_streaming(
+            data_folder,
+            weights_file,
+            year_range;
+            selected_months=selected_months,
+            variable_name="t2m",
+            day_threshold=day_threshold,
+            night_threshold=night_threshold,
+            min_consecutive_days=min_consecutive_days
+        )
+    end
 
     println("Step 2: Rendering map...")
 
@@ -949,18 +1052,6 @@ function run_canicule_heatmap(;
     println("Saved heatmap to: $output_file")
 
     if make_gif || make_curve
-        println("Step 3: Annual maps/curve...")
-        annual_days_maps, annual_mean_days, years = compute_annual_canicule_days_maps_streaming(
-            data_folder,
-            weights_file,
-            year_range;
-            selected_months=selected_months,
-            variable_name="t2m",
-            day_threshold=day_threshold,
-            night_threshold=night_threshold,
-            min_consecutive_days=min_consecutive_days
-        )
-
         if make_gif
             gif_file = isnothing(output_gif_file) ? joinpath(plot_dir, "heatmap_canicule_annual_$(first(years))_$(last(years)).gif") : output_gif_file
             save_annual_maps_gif(
