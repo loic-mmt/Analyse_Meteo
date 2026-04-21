@@ -15,14 +15,14 @@ using Proj # Reprojection vers WGS84
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 # Données température
-const data_folder_precise = joinpath(PROJECT_ROOT, "src", "ca_31km", "era5_ca_t2m_31km")
-const data_folder_basic = joinpath(PROJECT_ROOT, "src", "ca_31km", "era5_ca_t2m_31km")
-const data_folder_temporel = joinpath(PROJECT_ROOT, "src", "ca_31km", "era5_ca_t2m_31km")
+const data_folder_precise = joinpath(PROJECT_ROOT, "data", "canada")
+const data_folder_basic = joinpath(PROJECT_ROOT, "data", "canada")
+const data_folder_temporel = joinpath(PROJECT_ROOT, "data", "canada")
 
 # Fichiers de poids
-const weight_prop_basic = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada_9.nc")
-const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada_31.nc")
-const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada_31.nc")
+const weight_prop_basic = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada.nc")
+const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada.nc")
+const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada.nc")
 
 # Dossier de sortie des figures
 const plot_dir = joinpath(@__DIR__, "plot")
@@ -491,13 +491,113 @@ end
 # ================================================================================================
 
 """
+    canada_heat_thresholds(lat, lon)
+
+Retourne les seuils journaliers de canicule `(tmax, tmin, require_tmin)` pour
+un pixel Canada. Les régions sont approchées par boîtes lat/lon.
+"""
+function canada_heat_thresholds(lat::Float64, lon::Float64)
+    # Nord extrême Nunavut / TNO / Nunavik nord : seul Tmax >= 22°C.
+    if lat >= 72.0
+        return 22.0, NaN, false
+    end
+
+    # Yukon + nord-ouest de la Colombie-Britannique.
+    if lon <= -126.0 && lat >= 56.0
+        return 28.0, 13.0, true
+    end
+
+    # Côte sud-ouest de la Colombie-Britannique.
+    if lon >= -126.5 && lon <= -122.0 && lat >= 48.0 && lat <= 51.8
+        return 29.0, 16.0, true
+    end
+
+    # Intérieur sud-est de la Colombie-Britannique.
+    if lon > -122.0 && lon <= -114.0 && lat >= 48.0 && lat <= 53.0
+        return 35.0, 18.0, true
+    end
+
+    # Prairies sud.
+    if lon > -114.0 && lon <= -95.0 && lat >= 48.0 && lat <= 53.5
+        return 32.0, 16.0, true
+    end
+
+    # Sud de l'Ontario.
+    if lon > -95.0 && lon <= -74.0 && lat >= 41.0 && lat <= 47.0
+        return 31.0, 20.0, true
+    end
+
+    # Sud extrême du Québec (Montréal, Gatineau).
+    if lon > -77.8 && lon <= -72.0 && lat >= 45.0 && lat <= 46.8
+        return 32.0, 20.0, true
+    end
+
+    # Nouvelle-Écosse.
+    if lon > -66.7 && lon <= -59.0 && lat >= 43.0 && lat <= 47.8
+        return 29.0, 16.0, true
+    end
+
+    # Nouveau-Brunswick + sud du Québec.
+    if ((lon > -69.5 && lon <= -64.0 && lat >= 44.0 && lat <= 48.8) ||
+        (lon > -79.5 && lon <= -57.0 && lat >= 45.0 && lat <= 50.0))
+        return 30.0, 18.0, true
+    end
+
+    # Terre-Neuve-et-Labrador + centre du Québec.
+    if ((lon > -60.5 && lon <= -52.0 && lat >= 46.0 && lat <= 53.5) ||
+        (lon > -79.5 && lon <= -62.0 && lat > 50.0 && lat <= 56.5))
+        return 28.0, 16.0, true
+    end
+
+    # Fallback: attribution par bandes géographiques.
+    if lat >= 65.0
+        return 22.0, NaN, false
+    elseif lat >= 56.0
+        return 28.0, 13.0, true
+    elseif lon <= -95.0
+        return 32.0, 16.0, true
+    elseif lon <= -57.0
+        return 30.0, 18.0, true
+    else
+        return 28.0, 16.0, true
+    end
+end
+
+"""
+    build_canada_heat_threshold_maps(lons, lats)
+
+Construit les cartes de seuils de canicule (Tmax/Tmin) et le masque indiquant
+si Tmin est requis.
+"""
+function build_canada_heat_threshold_maps(lons::AbstractVector, lats::AbstractVector)
+    n_lon = length(lons)
+    n_lat = length(lats)
+    tmax_threshold = Matrix{Float64}(undef, n_lon, n_lat)
+    tmin_threshold = Matrix{Float64}(undef, n_lon, n_lat)
+    require_tmin = falses(n_lon, n_lat)
+
+    @inbounds for j in 1:n_lat
+        lat = Float64(lats[j])
+        for i in 1:n_lon
+            lon = Float64(lons[i])
+            tmax, tmin, need_min = canada_heat_thresholds(lat, lon)
+            tmax_threshold[i, j] = tmax
+            tmin_threshold[i, j] = tmin
+            require_tmin[i, j] = need_min
+        end
+    end
+
+    return tmax_threshold, tmin_threshold, require_tmin
+end
+
+"""
     calculate_heat_days(data_3d, weights_file; ...)
 
 Calcule le total d'heures de canicule par pixel.
 
-Règle par défaut :
-- Jour chaud si `Tmax_jour > 36°C` et `Tmin_jour > 21°C`.
-- Canicule si au moins `3` jours chauds consécutifs.
+Règle par défaut (fallback global) :
+- Jour chaud si `Tmax_jour >= 36°C` et `Tmin_jour >= 21°C`.
+- Canicule si au moins `2` jours chauds consécutifs.
 
 Hypothèse : la dimension temps est horaire continue (pas de temps fixe),
 et divisible par 24.
@@ -510,7 +610,7 @@ function calculate_heat_days(
     weights_file;
     day_threshold::Float64=36.0,
     night_threshold::Float64=21.0,
-    min_consecutive_days::Int=3,
+    min_consecutive_days::Int=2,
     mask_threshold::Float64=0.5,
     block_hours::Int=24
 )
@@ -557,7 +657,7 @@ function calculate_heat_days(
                 vals_float = Float64.(vals_day)
                 tmax = maximum(vals_float)
                 tmin = minimum(vals_float)
-                is_hot_day[d] = (tmax > day_threshold) && (tmin > night_threshold)
+                is_hot_day[d] = (tmax >= day_threshold) && (tmin >= night_threshold)
             end
 
             # 2) séquences de jours chauds consécutifs
@@ -610,8 +710,9 @@ Version basse mémoire : lit les NetCDF mois par mois et calcule les heures
 de canicule sans construire de cube 3D global.
 
 Cette fonction évite les `killed` liés à la RAM sur les longues périodes.
-Par défaut, le masque garde tous les pixels avec une fraction de territoire
-strictement positive (`weights_frac > 0`) pour conserver les bords.
+Par défaut, les seuils sont régionalisés pour le Canada (`use_regional_thresholds=true`)
+et le masque garde tous les pixels avec une fraction de territoire strictement
+positive (`weights_frac > 0`) pour conserver les bords.
 """
 function calculate_heat_days_streaming(
     data_folder::String,
@@ -621,7 +722,8 @@ function calculate_heat_days_streaming(
     variable_name::String="t2m",
     day_threshold::Float64=36.0,
     night_threshold::Float64=21.0,
-    min_consecutive_days::Int=3,
+    min_consecutive_days::Int=2,
+    use_regional_thresholds::Bool=true,
     mask_threshold::Float64=0.0,
     day_hours::Int=24
 )
@@ -639,9 +741,9 @@ function calculate_heat_days_streaming(
     isempty(files) && error("Aucun fichier NetCDF trouvé dans $data_folder.")
     first_file = files[1]
 
-    n_lon, n_lat = NCDataset(first_file) do ds0
+    n_lon, n_lat, lons_data, lats_data = NCDataset(first_file) do ds0
         dims = size(ds0[variable_name])
-        dims[1], dims[2]
+        dims[1], dims[2], Float64.(ds0["longitude"][:]), Float64.(ds0["latitude"][:])
     end
 
     # Masque spatial aligné sur la grille des données [lon, lat].
@@ -663,6 +765,8 @@ function calculate_heat_days_streaming(
     day_max = zeros(Float64, n_lon, n_lat)
     day_min = zeros(Float64, n_lon, n_lat)
     valid_day = falses(n_lon, n_lat)
+    tmax_threshold_map, tmin_threshold_map, require_tmin_map =
+        build_canada_heat_threshold_maps(lons_data, lats_data)
 
     total_steps = length(files)
     println("Starting streaming heatwave-hour calculations...")
@@ -686,9 +790,20 @@ function calculate_heat_days_streaming(
 
                     @inbounds for j in 1:n_lat
                         for i in 1:n_lon
-                            event = land_mask[i, j] && valid_day[i, j] &&
-                                    (day_max[i, j] > day_threshold) &&
-                                    (day_min[i, j] > night_threshold)
+                            event = false
+                            if land_mask[i, j] && valid_day[i, j]
+                                if use_regional_thresholds
+                                    if require_tmin_map[i, j]
+                                        event = (day_max[i, j] >= tmax_threshold_map[i, j]) &&
+                                                (day_min[i, j] >= tmin_threshold_map[i, j])
+                                    else
+                                        event = day_max[i, j] >= tmax_threshold_map[i, j]
+                                    end
+                                else
+                                    event = (day_max[i, j] >= day_threshold) &&
+                                            (day_min[i, j] >= night_threshold)
+                                end
+                            end
                             if event
                                 run_len[i, j] += 1
                             else
@@ -720,9 +835,20 @@ function calculate_heat_days_streaming(
 
                     @inbounds for j in 1:n_lat
                         for i in 1:n_lon
-                            event = land_mask[i, j] && valid_day[i, j] &&
-                                    (day_max[i, j] > day_threshold) &&
-                                    (day_min[i, j] > night_threshold)
+                            event = false
+                            if land_mask[i, j] && valid_day[i, j]
+                                if use_regional_thresholds
+                                    if require_tmin_map[i, j]
+                                        event = (day_max[i, j] >= tmax_threshold_map[i, j]) &&
+                                                (day_min[i, j] >= tmin_threshold_map[i, j])
+                                    else
+                                        event = day_max[i, j] >= tmax_threshold_map[i, j]
+                                    end
+                                else
+                                    event = (day_max[i, j] >= day_threshold) &&
+                                            (day_min[i, j] >= night_threshold)
+                                end
+                            end
                             if event
                                 run_len[i, j] += 1
                             else
@@ -844,7 +970,8 @@ function compute_annual_canicule_days_maps_streaming(
     variable_name::String="t2m",
     day_threshold::Float64=36.0,
     night_threshold::Float64=21.0,
-    min_consecutive_days::Int=3
+    min_consecutive_days::Int=2,
+    use_regional_thresholds::Bool=true
 )
     years = year_range isa Integer ? [year_range] : collect(year_range)
     n_years = length(years)
@@ -862,7 +989,8 @@ function compute_annual_canicule_days_maps_streaming(
             variable_name=variable_name,
             day_threshold=day_threshold,
             night_threshold=night_threshold,
-            min_consecutive_days=min_consecutive_days
+            min_consecutive_days=min_consecutive_days,
+            use_regional_thresholds=use_regional_thresholds
         )
         yearly_days = yearly_hours ./ 24.0
 
@@ -998,12 +1126,15 @@ function run_canicule_heatmap(;
     outline::Bool=true,
     day_threshold::Float64=36.0,
     night_threshold::Float64=21.0,
-    min_consecutive_days::Int=3,
+    min_consecutive_days::Int=2,
+    use_regional_thresholds::Bool=true,
     make_gif::Bool=true,
     make_curve::Bool=true
 )
     println("Running heatmap pipeline...")
     println("Years: $(first(year_range)) -> $(last(year_range))")
+    threshold_label = use_regional_thresholds ? "regional Canada" : "global"
+    println("Heatwave thresholds: $threshold_label")
     annual_days_maps = nothing
     annual_mean_days = nothing
     years = nothing
@@ -1018,7 +1149,8 @@ function run_canicule_heatmap(;
             variable_name="t2m",
             day_threshold=day_threshold,
             night_threshold=night_threshold,
-            min_consecutive_days=min_consecutive_days
+            min_consecutive_days=min_consecutive_days,
+            use_regional_thresholds=use_regional_thresholds
         )
         # Total période = somme des jours annuels, puis conversion en heures.
         total_days_map = dropdims(sum(annual_days_maps, dims=3), dims=3)
@@ -1033,7 +1165,8 @@ function run_canicule_heatmap(;
             variable_name="t2m",
             day_threshold=day_threshold,
             night_threshold=night_threshold,
-            min_consecutive_days=min_consecutive_days
+            min_consecutive_days=min_consecutive_days,
+            use_regional_thresholds=use_regional_thresholds
         )
     end
 

@@ -15,14 +15,14 @@ using Proj # Reprojection vers WGS84
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 # Données température
-const data_folder_precise = joinpath(PROJECT_ROOT, "src", "ca_31km", "era5_ca_t2m_31km")
-const data_folder_basic = joinpath(PROJECT_ROOT, "src", "ca_31km", "era5_ca_t2m_31km")
-const data_folder_temporel = joinpath(PROJECT_ROOT, "src", "ca_31km", "era5_ca_t2m_31km")
+const data_folder_precise = joinpath(PROJECT_ROOT, "data", "canada")
+const data_folder_basic = joinpath(PROJECT_ROOT, "data", "canada")
+const data_folder_temporel = joinpath(PROJECT_ROOT, "data", "canada")
 
 # Fichiers de poids
-const weight_prop_basic = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada_9.nc")
-const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada_31.nc")
-const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada_31.nc")
+const weight_prop_basic = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada.nc")
+const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada.nc")
+const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_canada.nc")
 
 # Dossier de sortie des figures
 const plot_dir = joinpath(@__DIR__, "plot")
@@ -491,6 +491,54 @@ end
 # ================================================================================================
 
 """
+    canada_cold_tmin_threshold(lat, lon)
+
+Retourne le seuil Tmin (°C) de grand froid pour un pixel Canada.
+Les régions sont approchées par boîtes lat/lon.
+"""
+function canada_cold_tmin_threshold(lat::Float64, lon::Float64)
+    # Nord canadien.
+    if lat >= 60.0
+        return -35.0
+    end
+
+    # Côte pacifique douce.
+    if lon <= -123.0 && lat >= 47.0 && lat <= 56.0
+        return -15.0
+    end
+
+    # Ontario sud / Québec sud / Atlantique.
+    if ((lon > -96.0 && lon <= -56.0 && lat <= 50.5) ||
+        (lon > -70.0 && lat <= 53.5))
+        return -25.0
+    end
+
+    # Prairies / intérieur continental.
+    return -30.0
+end
+
+"""
+    build_canada_cold_threshold_map(lons, lats)
+
+Construit la carte 2D des seuils Tmin (°C) pour la détection du grand froid.
+"""
+function build_canada_cold_threshold_map(lons::AbstractVector, lats::AbstractVector)
+    n_lon = length(lons)
+    n_lat = length(lats)
+    threshold_map = Matrix{Float64}(undef, n_lon, n_lat)
+
+    @inbounds for j in 1:n_lat
+        lat = Float64(lats[j])
+        for i in 1:n_lon
+            lon = Float64(lons[i])
+            threshold_map[i, j] = canada_cold_tmin_threshold(lat, lon)
+        end
+    end
+
+    return threshold_map
+end
+
+"""
     normalize_cold_mode(mode)
 
 Normalise le mode d'alerte grand froid vers `:jaune`, `:orange` ou `:rouge`.
@@ -543,7 +591,7 @@ function calculate_cold_days(
     data_3d::AbstractArray{<:Union{Missing, Real}, 3},
     weights_file;
     cold_mode::Symbol=:orange,
-    min_consecutive_days::Int=1,
+    min_consecutive_days::Int=2,
     mask_threshold::Float64=0.0,
     block_hours::Int=24
 )
@@ -646,59 +694,23 @@ function update_cold_runs_for_day!(
     cold_days_count::Matrix{Int32},
     land_mask::BitMatrix,
     valid_day::BitMatrix,
-    day_max::Matrix{Float64},
     day_min::Matrix{Float64},
+    tmin_threshold_map::Matrix{Float64},
     min_consecutive_days::Int,
-    mode::Symbol,
     n_lon::Int,
     n_lat::Int
 )
-    if mode == :jaune
-        @inbounds for j in 1:n_lat
-            for i in 1:n_lon
-                event = land_mask[i, j] && valid_day[i, j] &&
-                        (day_max[i, j] <= 0.0) &&
-                        (day_min[i, j] <= -5.0) &&
-                        (day_min[i, j] > -10.0)
-                if event
-                    run_len[i, j] += 1
-                else
-                    if run_len[i, j] >= min_consecutive_days
-                        cold_days_count[i, j] += run_len[i, j]
-                    end
-                    run_len[i, j] = 0
+    @inbounds for j in 1:n_lat
+        for i in 1:n_lon
+            event = land_mask[i, j] && valid_day[i, j] &&
+                    (day_min[i, j] <= tmin_threshold_map[i, j])
+            if event
+                run_len[i, j] += 1
+            else
+                if run_len[i, j] >= min_consecutive_days
+                    cold_days_count[i, j] += run_len[i, j]
                 end
-            end
-        end
-    elseif mode == :orange
-        @inbounds for j in 1:n_lat
-            for i in 1:n_lon
-                event = land_mask[i, j] && valid_day[i, j] &&
-                        (day_min[i, j] <= -10.0) &&
-                        (day_min[i, j] > -18.0)
-                if event
-                    run_len[i, j] += 1
-                else
-                    if run_len[i, j] >= min_consecutive_days
-                        cold_days_count[i, j] += run_len[i, j]
-                    end
-                    run_len[i, j] = 0
-                end
-            end
-        end
-    else
-        @inbounds for j in 1:n_lat
-            for i in 1:n_lon
-                event = land_mask[i, j] && valid_day[i, j] &&
-                        (day_min[i, j] <= -18.0)
-                if event
-                    run_len[i, j] += 1
-                else
-                    if run_len[i, j] >= min_consecutive_days
-                        cold_days_count[i, j] += run_len[i, j]
-                    end
-                    run_len[i, j] = 0
-                end
+                run_len[i, j] = 0
             end
         end
     end
@@ -709,14 +721,16 @@ function calculate_cold_days_streaming(
     data_folder::String,
     weights_file::String,
     year_range;
-    cold_mode::Symbol=:orange,
+    cold_mode::Symbol=:regional,
     selected_months=collect(1:12),
     variable_name::String="t2m",
-    min_consecutive_days::Int=1,
+    min_consecutive_days::Int=2,
     mask_threshold::Float64=0.0,
     day_hours::Int=24
 )
-    mode = normalize_cold_mode(cold_mode)
+    if Symbol(lowercase(String(cold_mode))) ∉ (:regional, :canada)
+        error("Pour le script Canada, utilisez `cold_mode=:regional` (seuils régionaux).")
+    end
 
     if year_range isa Integer
         year_range = [year_range]
@@ -732,9 +746,9 @@ function calculate_cold_days_streaming(
     isempty(files) && error("Aucun fichier NetCDF trouvé dans $data_folder.")
     first_file = files[1]
 
-    n_lon, n_lat = NCDataset(first_file) do ds0
+    n_lon, n_lat, lons_data, lats_data = NCDataset(first_file) do ds0
         dims = size(ds0[variable_name])
-        dims[1], dims[2]
+        dims[1], dims[2], Float64.(ds0["longitude"][:]), Float64.(ds0["latitude"][:])
     end
 
     dsw = NCDataset(weights_file)
@@ -751,12 +765,13 @@ function calculate_cold_days_streaming(
 
     run_len = zeros(Int16, n_lon, n_lat)
     cold_days_count = zeros(Int32, n_lon, n_lat)
-    day_max = zeros(Float64, n_lon, n_lat)
     day_min = zeros(Float64, n_lon, n_lat)
+    day_max = zeros(Float64, n_lon, n_lat)
     valid_day = falses(n_lon, n_lat)
+    tmin_threshold_map = build_canada_cold_threshold_map(lons_data, lats_data)
 
     total_steps = length(files)
-    println("Starting streaming grand-froid calculations (mode: $(cold_mode_label(mode)))...")
+    println("Starting streaming grand-froid calculations (regional thresholds)...")
 
     for (step, file) in enumerate(files)
         NCDataset(file) do ds
@@ -775,8 +790,8 @@ function calculate_cold_days_streaming(
                     day_cube = ds[variable_name][:, :, idx]
                     compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
                     update_cold_runs_for_day!(
-                        run_len, cold_days_count, land_mask, valid_day, day_max, day_min,
-                        min_consecutive_days, mode, n_lon, n_lat
+                        run_len, cold_days_count, land_mask, valid_day, day_min, tmin_threshold_map,
+                        min_consecutive_days, n_lon, n_lat
                     )
                 else
                     finalize_open_runs!(run_len, cold_days_count, min_consecutive_days)
@@ -796,8 +811,8 @@ function calculate_cold_days_streaming(
                     day_cube = ds[variable_name][:, :, idx]
                     compute_day_stats!(day_cube, day_max, day_min, valid_day; kelvin_to_celsius=true)
                     update_cold_runs_for_day!(
-                        run_len, cold_days_count, land_mask, valid_day, day_max, day_min,
-                        min_consecutive_days, mode, n_lon, n_lat
+                        run_len, cold_days_count, land_mask, valid_day, day_min, tmin_threshold_map,
+                        min_consecutive_days, n_lon, n_lat
                     )
                 else
                     finalize_open_runs!(run_len, cold_days_count, min_consecutive_days)
@@ -905,12 +920,11 @@ function compute_annual_cold_days_maps_streaming(
     data_folder::String,
     weights_file::String,
     year_range;
-    cold_mode::Symbol=:orange,
+    cold_mode::Symbol=:regional,
     selected_months=collect(1:12),
     variable_name::String="t2m",
-    min_consecutive_days::Int=1
+    min_consecutive_days::Int=2
 )
-    mode = normalize_cold_mode(cold_mode)
     years = year_range isa Integer ? [year_range] : collect(year_range)
     n_years = length(years)
     n_years == 0 && error("year_range est vide.")
@@ -923,7 +937,7 @@ function compute_annual_cold_days_maps_streaming(
             data_folder,
             weights_file,
             y:y;
-            cold_mode=mode,
+            cold_mode=cold_mode,
             selected_months=selected_months,
             variable_name=variable_name,
             min_consecutive_days=min_consecutive_days
@@ -1059,19 +1073,18 @@ function run_grand_froid_heatmap(;
     output_file::Union{Nothing, String}=nothing,
     output_gif_file::Union{Nothing, String}=nothing,
     output_curve_file::Union{Nothing, String}=nothing,
-    cold_mode::Symbol=:orange,
+    cold_mode::Symbol=:regional,
     outline::Bool=true,
-    min_consecutive_days::Int=1,
+    min_consecutive_days::Int=2,
     make_gif::Bool=true,
     make_curve::Bool=true
 )
-    mode = normalize_cold_mode(cold_mode)
-    mode_txt = cold_mode_label(mode)
-    output_file = isnothing(output_file) ? joinpath(plot_dir, "heatmap_grand_froid_canada_1950_2025_$(mode_txt).png") : output_file
+    mode_txt = "regional"
+    output_file = isnothing(output_file) ? joinpath(plot_dir, "heatmap_grand_froid_canada_1950_2025.png") : output_file
 
     println("Running heatmap pipeline...")
     println("Years: $(first(year_range)) -> $(last(year_range))")
-    println("Mode grand froid: $mode_txt")
+    println("Cold thresholds: regional Canada")
     annual_days_maps = nothing
     annual_mean_days = nothing
     years = nothing
@@ -1082,7 +1095,7 @@ function run_grand_froid_heatmap(;
             data_folder,
             weights_file,
             year_range;
-            cold_mode=mode,
+            cold_mode=cold_mode,
             selected_months=selected_months,
             variable_name="t2m",
             min_consecutive_days=min_consecutive_days
@@ -1095,7 +1108,7 @@ function run_grand_froid_heatmap(;
             data_folder,
             weights_file,
             year_range;
-            cold_mode=mode,
+            cold_mode=cold_mode,
             selected_months=selected_months,
             variable_name="t2m",
             min_consecutive_days=min_consecutive_days
@@ -1108,32 +1121,32 @@ function run_grand_froid_heatmap(;
         cold_hours,
         weights_file;
         outline=outline,
-        title="Heures de grand froid Canada ($(first(year_range))-$(last(year_range))) - mode $(mode_txt)"
+        title="Heures de grand froid Canada ($(first(year_range))-$(last(year_range)))"
     )
     save_plot(p, output_file)
     println("Saved heatmap to: $output_file")
 
     if make_gif || make_curve
         if make_gif
-            gif_file = isnothing(output_gif_file) ? joinpath(plot_dir, "heatmap_grand_froid_canada_annual_$(mode_txt)_$(first(years))_$(last(years)).gif") : output_gif_file
+            gif_file = isnothing(output_gif_file) ? joinpath(plot_dir, "heatmap_grand_froid_canada_annual_$(first(years))_$(last(years)).gif") : output_gif_file
             save_annual_maps_gif(
                 annual_days_maps,
                 years,
                 weights_file,
                 gif_file;
-                title_prefix="Grand froid $(mode_txt) (jours/pixel)",
+                title_prefix="Grand froid (jours/pixel)",
                 outline=outline
             )
             println("Saved annual GIF to: $gif_file")
         end
 
         if make_curve
-            curve_file = isnothing(output_curve_file) ? joinpath(plot_dir, "courbe_grand_froid_canada_annual_$(mode_txt)_$(first(years))_$(last(years)).png") : output_curve_file
+            curve_file = isnothing(output_curve_file) ? joinpath(plot_dir, "courbe_grand_froid_canada_annual_$(first(years))_$(last(years)).png") : output_curve_file
             save_annual_curve(
                 years,
                 annual_mean_days,
                 curve_file;
-                title="Grand froid $(mode_txt) - jours moyens par pixel et par année",
+                title="Grand froid Canada - jours moyens par pixel et par année",
                 ylabel="Jours de grand froid / pixel"
             )
             println("Saved annual curve to: $curve_file")
@@ -1152,13 +1165,13 @@ Point d'entrée en mode script.
 Usage :
 - `julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl`
 - `julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl /chemin/sortie.png`
-- `julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl /chemin/sortie.png 1950 2025 rouge`
+- `julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl /chemin/sortie.png 1950 2025`
 """
 function main(args=ARGS)
     output_file = length(args) >= 1 ? args[1] : nothing
     start_year = length(args) >= 2 ? parse(Int, args[2]) : 1950
     end_year = length(args) >= 3 ? parse(Int, args[3]) : 2025
-    cold_mode = length(args) >= 4 ? Symbol(lowercase(args[4])) : :orange
+    cold_mode = length(args) >= 4 ? Symbol(lowercase(args[4])) : :regional
 
     if end_year < start_year
         error("end_year ($end_year) doit être >= start_year ($start_year).")
@@ -1185,10 +1198,10 @@ julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl
 Mode script avec sortie personnalisée
 julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl /tmp/grand_froid_canada.png
 
-Mode script avec intervalle d'années + mode (jaune|orange|rouge)
-julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl /tmp/grand_froid_canada.png 1960 2025 rouge
+Mode script avec intervalle d'années
+julia analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl /tmp/grand_froid_canada.png 1960 2025
 
 Depuis un autre fichier :
 include("analyses_complementaires/Canada/heatmap_grand_froid_1950_2025_.jl")
-cold_hours, p = run_grand_froid_heatmap(year_range=1950:2025, cold_mode=:orange)
+cold_hours, p = run_grand_froid_heatmap(year_range=1950:2025)
 =#
