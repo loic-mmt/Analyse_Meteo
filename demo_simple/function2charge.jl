@@ -165,7 +165,7 @@ function accumulate_data(data_folder, year_range, mode, months, days, hours, var
                     for t in 1:length(indices)
                         time_val = times[indices[t]]
                         
-                        # Get key based on new logic (including daily)
+                        # Get key 
                         key = get_binning_key(mode, year, month, time_val)
                         # Test si la variable "days" est vide, si non on réccupère les indices dont le jour correspond.
                         if !haskey(sums_dict, key)
@@ -415,7 +415,7 @@ function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing, 
     # plot de base (scatter points)
     p = plot(df.Year, df.Temp,
         title = "Climate Trends Analysis",
-        xlabel = "Year", ylabel = "Temperature (°C)",
+        xlabel = "Time Index", ylabel = "Temperature (°C)",
         label = "Observed Means",
         seriestype = :scatter, 
         color = :pink,
@@ -613,7 +613,7 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     
     # 2. Determine fixed color limits for the whole period
     # We ignore NaNs so they don't break the min/max calculation
-    valid_data = filter(!ismissing, data_3d)
+    valid_data = filter(x -> !ismissing(x) && !isnan(x), data_3d)
     if isempty(valid_data)
         println("Error: Data contains only NaNs.")
         return
