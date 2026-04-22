@@ -9,9 +9,9 @@ include("dataset2load.jl")
 # sauvegardes dans demo/plot.
 
 # Exemple 1 : information sur une heure precise (03/10/1997 a 19h).
-matrix1 = compute_general_climatology(data_folder_basic, weight_prop_basic, 1997; selected_days=03, selected_months=10, selected_hours=19)
+matrix1 = compute_general_climatology(data_folder_basic, weight_prop_basic, 1997; selected_days=03, selected_months=01, selected_hours=19)
 # p1 = carte instantanee de temperature pour cette date/heure.
-p1 = vizumap(matrix1, weight_prop_basic)
+vizumap(matrix1, weight_prop_basic)
 save_plot(p1, joinpath(plot_dir, "ex1_vizumap.png"))
 # Serie moyenne spatiale (ici un seul pas de temps car on a filtré une seule heure).
 means_vector_calculation(matrix1, weight_prop_basic)
@@ -34,7 +34,7 @@ save_plot(p3, joinpath(plot_dir, "ex3_trends_window24.png"))
 plot_file3 = joinpath(plot_dir, "ex3_animation.gif")
 isfile(plot_file3) && rm(plot_file3)
 # Animation des cartes 2D au fil du temps (un frame par pas horaire).
-animate_climatology(matrix3, weight_prop_basic, filename=plot_file3)
+animate_climatology(matrix3, weight_prop_basic, filename="plot_file3")
 
 # Exemple 4 : tendances annuelles (1950->2025) sur la 2e quinzaine de janvier (jours 15 a 31).
 matrix4 = compute_general_climatology(data_folder_basic, weight_prop_basic, 1950:2025; mode=:yearly, selected_months=01, selected_days=15:31)

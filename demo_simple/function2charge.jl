@@ -244,7 +244,7 @@ Un tuple `(final_3d_matrix, valid_times)`.
 function finalize_cube(sums_dict, counts_dict, weights, mode)
 
     # 1. Prepare Mask
-    weights = weights
+    weights = weights'
     visual_mask = fill(NaN, size(weights))
     visual_mask[weights .> 0.0] .= 1.0
 
@@ -554,17 +554,16 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
     limit = maximum(abs.(filter(!isnan, sig_slope_map)))
     lons = collect(1:size(sig_slope_map, 1))
     lats = collect(1:size(sig_slope_map, 2))
-    outline_segments = nothing
     if !isnothing(weights_file)
         ds = NCDataset(weights_file)
         lats = ds["latitude"][:]
         lons = ds["longitude"][:]
         close(ds)
-        outline_segments = load_outline_segments(FRANCE_SHP)
     end
     z_map = sig_slope_map'
-    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, z_map)
-    z_plot = z_map[lat_idx, lon_idx]
+    idx_lon, idx_lat = sortperm(lons), sortperm(lats)
+    x_plot, y_plot = lons[idx_lon], lats[idx_lat]
+    z_plot = z_map[idx_lat, idx_lon]
     p = heatmap(
         x_plot,
         y_plot,
@@ -600,15 +599,19 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     
     println("Generating animation...")
 
+    # 1. Load coordinates and weights
     ds = NCDataset(weights_file)
     weights = ds["weights_frac"][:, :]
     lats = ds["latitude"][:]
     lons = ds["longitude"][:]
     close(ds)
-    outline_segments = load_outline_segments(FRANCE_SHP)
-    mask = country_mask_for_map(weights, size(data_3d[:, :, 1]'))
-    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, data_3d[:, :, 1]')
-    # 1. Determine fixed color limits for the whole period
+    
+    # --- Inline Axis Alignment Setup ---
+    idx_lon, idx_lat = sortperm(lons), sortperm(lats)
+    x_plot, y_plot = lons[idx_lon], lats[idx_lat]
+    # -----------------------------------
+    
+    # 2. Determine fixed color limits for the whole period
     # We ignore NaNs so they don't break the min/max calculation
     valid_data = filter(!ismissing, data_3d)
     if isempty(valid_data)
@@ -617,15 +620,19 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     end
     min_val, max_val = minimum(valid_data), maximum(valid_data)
     
-    # 2. Create the Animation object
-    anim = @animate for i in 1:length(data_3d[1,1,:])
+    n_time = size(data_3d, 3)
+    
+    # 3. Create the Animation object
+    anim = @animate for i in 1:n_time
         
-        # Extract the 2D map for this year
-        # Transpose (') is usually needed because Julia arrays are Col-Major
-        # but heatmap expects [x, y]. 
+        # Extract the 2D map for this year and transpose
         current_map = data_3d[:, :, i]'
-        current_map[.!mask] .= NaN
-        z_plot = current_map[lat_idx, lon_idx]
+        
+        # --- Inline Masking ---
+        current_map[weights .< 0.5] .= NaN
+        
+        # --- Apply axis alignment to the data ---
+        z_plot = current_map[idx_lat, idx_lon]
 
         p = heatmap(
             x_plot,
@@ -643,8 +650,7 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
         p
     end
 
-    # 3. Save the GIF
-    # fps = frames per second. 
+    # 4. Save the GIF
     gif(anim, filename, fps = 5) 
     println("Saved animation to $filename")
 end
@@ -670,29 +676,37 @@ function vizumap(data_2d, weights_file)
     lats = ds["latitude"][:]
     lons = ds["longitude"][:]
     close(ds)
+    
     valid_data = filter(!ismissing, data_2d)
     if isempty(valid_data)
         println("Error: Data contains only NaNs.")
         return
     end
     current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
-    mask = country_mask_for_map(weights, size(current_map))
-    current_map[.!mask] .= NaN
-    outline_segments = load_outline_segments(FRANCE_SHP)
-    x_plot, y_plot, lon_idx, lat_idx = prepare_heatmap_axes(lons, lats, current_map)
-    z_plot = current_map[lat_idx, lon_idx]
+    
+    # --- Inline Masking ---
+    current_map[weights .< 0.5] .= NaN
+    
+    # --- Inline Axis Alignment ---
+    idx_lon, idx_lat = sortperm(lons), sortperm(lats)
+    x_plot, y_plot = lons[idx_lon], lats[idx_lat]
+    z_plot = current_map[idx_lat, idx_lon]
+    
     min_val, max_val = minimum(valid_data), maximum(valid_data)
+    
     p = heatmap(
-            x_plot,
-            y_plot,
-            z_plot,
-            title = "Temperature",
-            clims = (min_val, max_val),
-            c = :thermal,   # Color palette
-            xlabel = "Longitude",
-            ylabel = "Latitude",
-            aspect_ratio = :equal,
-            right_margin = 5Plots.mm,
-            yflip = false)    # Give space for the colorbar
+        x_plot,
+        y_plot,
+        z_plot,
+        title = "Temperature",
+        clims = (min_val, max_val),
+        c = :thermal,
+        xlabel = "Longitude",
+        ylabel = "Latitude",
+        aspect_ratio = :equal,
+        right_margin = 5Plots.mm,
+        yflip = false
+    )
+            
     return p
 end
