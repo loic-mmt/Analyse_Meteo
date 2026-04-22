@@ -11,6 +11,17 @@ using ArchGDAL
 using Proj
 
 
+
+"""
+    save_plot(plot_obj, plot_file)
+
+Sauvegarde un objet graphique généré par `Plots.jl` dans un fichier.
+Si un fichier du même nom existe déjà, il est supprimé avant l'écriture pour éviter les conflits.
+
+# Arguments
+- `plot_obj` : L'objet graphique à sauvegarder.
+- `plot_file::String` : Le chemin et le nom du fichier de destination (ex: "output.png").
+"""
 function save_plot(plot_obj, plot_file)
     isfile(plot_file) && rm(plot_file)
     savefig(plot_obj, plot_file)
@@ -20,7 +31,7 @@ end
 
 
 """
-    compute_general_climatology(data_folder, weights, year_range; mode, ...)
+    compute_general_climatology(data_folder, weights_file, year_range; kwargs...)
 
 Fonction principale (Orchestrateur) pour le calcul de climatologies.
 Elle exécute séquentiellement :
@@ -28,21 +39,21 @@ Elle exécute séquentiellement :
 2. Le calcul mathématique des moyennes et le masquage.
 3. L'exportation optionnelle vers un nouveau fichier NetCDF.
 
-Arguments :
-- `data_folder` : Chemin vers le dossier des fichiers ERA5 bruts.
-- `weights` : Matrice de poids spatiaux (utilisée pour créer le masque visuel).
-- `year_range` : Plage d'années à traiter (ex: 1950:2020).
-- `mode` : Niveau d'agrégation (:daily, :monthly, :yearly, ou :total).
-- `selected_months` : (Optionnel) Vecteur d'entiers pour filtrer les mois (ex: [6, 7, 8] pour l'été).
-- `selected_days` : (Optionnel) Vecteur d'entiers pour filtrer des jours spécifiques.
-- `selected_hours` : Plage horaire à traiter pour filter des heures spécifiques.
-- `export_path` : (Optionnel) Chemin de fichier pour sauvegarder le résultat NetCDF.
+# Arguments
+- `data_folder::String` : Chemin vers le dossier des fichiers ERA5 bruts.
+- `weights_file::String` : Chemin vers le fichier NetCDF contenant la matrice de poids spatiaux.
+- `year_range` : Plage d'années à traiter (ex: 1950:2020) ou entier unique.
 
-Retourne :
+# Mots-clés (kwargs)
+- `mode::Symbol` : Niveau d'agrégation (:hourly, :daily, :monthly, :yearly, ou :total). Défaut: `:total`.
+- `selected_months` : Vecteur d'entiers pour filtrer les mois (ex: [6, 7, 8] pour l'été). Défaut: `1:12`.
+- `selected_days` : Vecteur d'entiers ou `nothing` pour filtrer des jours spécifiques.
+- `selected_hours` : Plage horaire ou entier pour filtrer des heures spécifiques. Défaut: `0:23`.
+- `variable_name::String` : Nom de la variable à extraire du NetCDF. Défaut: `"t2m"`.
+- `export_path::String` : (Optionnel) Chemin pour sauvegarder le résultat NetCDF.
+
+# Retourne
 - `final_cube` : Une matrice 3D [Lon, Lat, Temps] contenant les températures moyennes en Celsius.
-
-Exporte :
-- un fichier .nc contenant la matrice  `final_cube`.
 """
 function compute_general_climatology(
     data_folder::String, 
@@ -95,25 +106,24 @@ end
 
 
 """
-    accumulate_data(data_folder, year_range, mode, months, days, var_name)
+    accumulate_data(data_folder, year_range, mode, months, days, hours, var_name)
 
 Étape 1 du pipeline : Lecture et Accumulation.
-Cette fonction parcourt les fichiers NetCDF un par un et accumule les températures dans des dictionnaires, sans jamais charger toutes les données en mémoire vive.
+Parcourt les fichiers NetCDF et accumule les températures valides en mémoire (streaming) sans surcharger la RAM.
 
-Fonctionnement :
-- Elle détermine une "Clé d'Agrégation" pour chaque image (ex: "Janvier 1950" ou juste "1950") selon le `mode`.
-- Elle somme les températures valides dans `sums_dict`.
-- Elle compte le nombre de pixels valides dans `counts_dict`.
+# Logique
+- Détermine une clé d'agrégation pour chaque pas de temps via `get_binning_key`.
+- Ajoute les températures à `sums_dict` et incrémente le compteur de pixels dans `counts_dict`.
 
-Arguments :
+# Arguments
 - `data_folder` : Dossier source.
 - `year_range` : Années à parcourir.
-- `mode` : Définit la logique de création des clés (:monthly, :yearly, :total).
-- `months`/`days` : Filtres temporels.
-- `var_name` : Nom de la variable dans le NetCDF (par défaut "t2m").
+- `mode` : Logique de création des clés temporelles.
+- `months`/`days`/`hours` : Filtres temporels pour l'extraction.
+- `var_name` : Nom de la variable géospatiale cible.
 
-Retourne un tuple :
-- `(sums_dict, counts_dict, lons, lats)`
+# Retourne
+Un tuple `(sums_dict, counts_dict, lons, lats)`.
 """
 function accumulate_data(data_folder, year_range, mode, months, days, hours, var_name)
     sums_dict = Dict{Any, Matrix{Float64}}()
@@ -183,8 +193,19 @@ end
 
 
 
+"""
+    get_binning_key(mode, year, month, time_val)
 
-# Function d'aide pour l'utilisation des clées
+Génère une clé d'agrégation dynamique pour grouper les données lors de l'accumulation.
+
+# Arguments
+- `mode::Symbol` : Le niveau de résolution temporelle désiré (:monthly, :daily, :hourly, :yearly).
+- `year`, `month` : Entiers représentant l'année et le mois en cours de traitement.
+- `time_val` : L'objet Date/DateTime exact extrait du fichier NetCDF.
+
+# Retourne
+Une clé (Date, entier, ou string) utilisée pour identifier la tranche temporelle dans le dictionnaire.
+"""
 function get_binning_key(mode, year, month, time_val)
     if mode == :monthly
         return Date(year, month, 1)
@@ -206,21 +227,20 @@ end
 Étape 2 du pipeline : Finalisation Mathématique.
 Transforme les données accumulées en un cube de données propre et calibré.
 
-Opérations effectuées :
-1. Calcul de la moyenne arithmétique : Moyenne = Somme / Compteur.
-2. Application du Masque Visuel : Met à NaN les zones où `weights` < 0.9 (ex: Océans).
-3. Conversion d'unités : Kelvin vers Celsius (T - 273.15).
-4. Tri chronologique : Assure que les cartes sont dans l'ordre (Janvier, Février...).
-5. Empilement : Transforme la liste de cartes 2D en une matrice 3D.
+# Opérations
+1. Calcul de la moyenne arithmétique (Somme / Compteur).
+2. Conversion d'unités : Kelvin vers Celsius (T - 273.15).
+3. Masquage Visuel : Applique `NaN` aux pixels où le poids est <= 0.0 (ex: océans).
+4. Empilement : Construit une matrice 3D ordonnée chronologiquement.
 
-Arguments :
-- `sums_dict` / `counts_dict` : Les dictionnaires remplis par `accumulate_data`.
-- `weights` : La matrice de poids pour le masquage.
-- `mode` : Nécessaire pour savoir comment trier les clés temporelles.
+# Arguments
+- `sums_dict`, `counts_dict` : Dictionnaires générés par `accumulate_data`.
+- `weights` : Matrice 2D des poids spatiaux.
+- `mode` : Définit le type de tri chronologique à appliquer.
 
-Retourne un tuple :
-- `(final_3d_matrix, valid_times)`
-"""
+# Retourne
+Un tuple `(final_3d_matrix, valid_times)`.
+""" 
 function finalize_cube(sums_dict, counts_dict, weights, mode)
 
     # 1. Prepare Mask
@@ -278,19 +298,14 @@ end
     save_climatology_netcdf(path, matrix, times, lons, lats, mode)
 
 Étape 3 du pipeline : Exportation.
-Crée un fichier NetCDF standardisé compatible avec les outils externes (QGIS, Python, Panoply).
+Crée un fichier NetCDF standardisé, incluant les dimensions et métadonnées nécessaires pour une utilisation dans des logiciels SIG (QGIS, Panoply).
 
-Fonctionnalités :
-- Définit dynamiquement la dimension temporelle ("time" pour mensuel, "year" pour annuel).
-- Ajoute les métadonnées essentielles (_FillValue, units, long_name).
-- Gère la suppression du fichier existant pour éviter les conflits d'écriture.
-
-Arguments :
-- `path` : Chemin de destination (ex: "output/climatology.nc").
-- `matrix` : La matrice 3D calculée.
-- `times` : Le vecteur d'axe temporel (Dates ou Entiers).
-- `lons`/`lats` : Les vecteurs de coordonnées géographiques.
-- `mode` : Influence le nommage des dimensions.
+# Arguments
+- `path::String` : Chemin du fichier de destination.
+- `matrix` : Matrice 3D de données (Longitude, Latitude, Temps).
+- `times` : Vecteur représentant l'axe temporel.
+- `lons`, `lats` : Vecteurs des coordonnées géographiques.
+- `mode::Symbol` : Détermine le nommage de la dimension temporelle ("year" ou "time").
 """
 function save_climatology_netcdf(path, matrix, times, lons, lats, mode)
     
@@ -323,20 +338,18 @@ function save_climatology_netcdf(path, matrix, times, lons, lats, mode)
 end
 
 """
-    means_vector_calculation(data_3d, weights)
+    means_vector_calculation(data_3d, weights_file)
 
 Calcule une série temporelle de températures moyennes pondérées spatialement.
-
-Cette fonction réduit les dimensions spatiales (Longitude × Latitude) pour produire un vecteur 1D
-représentant l'évolution de la moyenne globale au cours du temps. Elle gère les données
-en ajustant la somme des poids dynamiquement.
+Réduit les dimensions spatiales (Longitude × Latitude) pour produire un vecteur 1D 
+représentant l'évolution globale au cours du temps.
 
 # Arguments
-- `data_3d::AbstractArray{T, 3}` : Cube de données [Longitude, Latitude, Temps].
-- `weights::Matrix{Float64}` : Matrice de poids 2D. Elle est transposée en interne pour correspondre aux dimensions.
+- `data_3d::AbstractArray{T, 3}` : Cube de données spatiales et temporelles.
+- `weights_file::String` : Chemin vers le fichier NetCDF contenant la matrice des poids (frac).
 
 # Retourne
-- `Vector{Float64}` : La liste des températures moyennes pour chaque pas de temps.
+- `Vector{Float64}` : Liste chronologique des moyennes pondérées calculées.
 """
 function means_vector_calculation(
     data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, 
@@ -379,20 +392,20 @@ function means_vector_calculation(
 end
 
 """
-    trends_climate(means, years_range; trend=false, cutting=0)
+    trends_climate(means; trend=false, cutting=Nothing, window=Nothing)
 
-Affiche l'évolution temporelle des températures et calcule les tendances linéaires.
-
-Permet de visualiser les données brutes sous forme de scatter plot, et d'ajouter en option
-une régression linéaire globale ou segmentée (avant/après une date de coupure).
+Trace l'évolution temporelle des températures et modélise les tendances.
 
 # Arguments
-- `means::Vector{Float64}` : Le vecteur des températures moyennes (sortie de `means_vector_calculation`).
-- `trend::Bool` (keyword) : Si `true`, calcule et affiche les droites de régression.
-- `cutting::Int` (keyword) : Année de rupture pour calculer deux tendances distinctes (ex: 1980).
+- `means::Vector{Float64}` : Vecteur temporel des températures.
+
+# Mots-clés
+- `trend` : Si `true`, applique et trace une régression linéaire globale.
+- `cutting` : Année (index) de rupture spatiale pour diviser la régression en deux périodes.
+- `window` : Fenêtre temporelle (entier) pour superposer une courbe de moyenne mobile.
 
 # Retourne
-- Un objet `Plot` contenant le graphique.
+- `p` : L'objet Plot généré.
 """
 function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing, window=Nothing)
     # Creation du dataframe pour les models et transfer en vecteur des années
@@ -455,20 +468,20 @@ function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing, 
 end
 
 """
-    calculate_trends_glm(data_3d, weights)
+    calculate_trends_glm(data_3d, weights_file)
 
-Effectue une régression linéaire pixel par pixel sur l'ensemble de la grille spatiale.
+Effectue une régression linéaire pixel par pixel sur le cube temporel complet.
 
-Utilise un modèle GLM (`lm`) pour estimer la pente de température (°C/an) en chaque point,
-en excluant les zones masquées par les poids (ex: océans).
+Utilise un modèle GLM (`lm`) pour estimer la pente de température (°C/pas de temps) 
+en chaque point géographique. Exclut les pixels masqués (poids < 0.5).
 
 # Arguments
-- `data_3d` : Cube de données [Lon, Lat, Time].
-- `weights` : Matrice de poids utilisée comme masque (seuil à 0.5).
+- `data_3d` : Cube de données [Lon, Lat, Temps].
+- `weights_file::String` : Fichier contenant les poids pour ignorer les pixels invalides (océan).
 
 # Retourne
-- `slope_grid::Matrix` : Carte des pentes (coefficients directeurs).
-- `p_value_grid::Matrix` : Carte des p-values associées (significativité statistique).
+- `slope_grid::Matrix{Float64}` : Carte 2D des coefficients directeurs (pentes).
+- `p_value_grid::Matrix{Float64}` : Carte 2D des p-values associées à chaque pente.
 """
 function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file)
 
@@ -514,17 +527,22 @@ function calculate_trends_glm(data_3d::AbstractArray{<:Union{Missing, Float64}, 
 end
 
 """
-    glm_visu_trend(slope_map, p_map; p_value=0.05)
+    glm_visu_trend(slope_map, p_map; p_value=0.05, weights_file=nothing)
 
-Affiche une carte thermique (heatmap) des tendances de température.
+Génère une carte thermique (Heatmap) des tendances climatiques significatives.
 
-Filtre les pixels non significatifs en se basant sur la carte des p-values.
-Les zones où p > `p_value` sont masquées (NaN) et n'apparaissent pas sur la carte.
+Masque automatiquement les données non significatives où la p-value dépasse le seuil défini.
 
 # Arguments
-- `slope_map` : Matrice des pentes calculées.
-- `p_map` : Matrice des p-values correspondantes.
-- `p_value` : Seuil de significativité (défaut 0.05 pour 95% de confiance).
+- `slope_map::AbstractArray` : Matrice 2D des pentes issues de `calculate_trends_glm`.
+- `p_map::AbstractArray` : Matrice 2D des p-values.
+
+# Mots-clés
+- `p_value::Float64` : Seuil de significativité statistique (défaut 0.05).
+- `weights_file` : (Optionnel) Fichier de poids utilisé pour projeter correctement les axes Longitude/Latitude.
+
+# Retourne
+- `p` : L'objet Plot de type Heatmap.
 """
 function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing)
 
@@ -562,18 +580,21 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
 end
 
 """
-    animate_climatology(data_3d, weights, valid_years; filename="...")
+    animate_climatology(data_3d, weights_file; filename="temperature_evolution.gif")
 
-Génère une animation GIF montrant l'évolution des cartes de température année par année.
-
-Applique un masque binaire basé sur les poids (terre/mer) pour ne visualiser que les
-zones d'intérêt. L'échelle de couleur est fixée globalement pour permettre la comparaison.
+Crée une animation GIF parcourant l'axe temporel du cube de données.
+La limite des couleurs (`clims`) est verrouillée sur le minimum et maximum global 
+de toute la période pour assurer la cohérence visuelle.
 
 # Arguments
-- `data_3d` : Cube de données.
-- `weights` : Matrice de masque (seuil à 0.5).
-- `valid_years` : Vecteur des années correspondant à la dimension temporelle.
-- `filename` : Nom du fichier de sortie (défaut "temperature_evolution.gif").
+- `data_3d::AbstractArray` : Cube de températures [Lon, Lat, Temps].
+- `weights_file::String` : Chemin vers le fichier NetCDF de masque/poids spatiaux.
+
+# Mots-clés
+- `filename::String` : Nom du fichier d'export de l'animation.
+
+# Retourne
+- Aucune valeur (Sauvegarde le fichier localement).
 """
 function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif")
     
@@ -628,7 +649,21 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     println("Saved animation to $filename")
 end
 
+"""
+    vizumap(data_2d, weights_file)
 
+Génère une carte thermique statique (Heatmap) à partir de données 2D ou de la première 
+couche temporelle d'un cube 3D.
+
+Applique un masque géographique via le fichier des poids.
+
+# Arguments
+- `data_2d` : Données spatiales en matrice (si 3D, sélectionne uniquement `[:, :, 1]`).
+- `weights_file::String` : Fichier contenant la matrice des poids (frac) et les coordonnées lat/lon.
+
+# Retourne
+- `p` : L'objet Plot généré.
+"""
 function vizumap(data_2d, weights_file)
     ds = NCDataset(weights_file)
     weights = ds["weights_frac"][:,:]
