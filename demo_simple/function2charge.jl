@@ -696,7 +696,7 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
             x_plot,
             y_plot,
             z_plot,
-            title = "Mean Temperature: $i",
+            title = "Carte des températures à l'indice $i",
             clims = (min_val, max_val),
             c = :thermal,   # Color palette
             xlabel = "Longitude",

@@ -91,7 +91,7 @@ println("\n--- Exemple 6 : Regressions annuelles (1950-2025) ---")
 matrix6 = compute_general_climatology(data_folder_fr_31, weight_france_31, 1950:2025, mode=:yearly)
 vector6 = means_vector_calculation(matrix6, weight_france_31)
 
-p6_w5 = trends_climate(vector6, window=5)
+p6_w5 = trends_climate(vector6, trend=true, window=5)
 save_plot(p6_w5, joinpath(plot_dir, "ex6_trends_window5.png"))
 
 p6_trend = trends_climate(vector6, trend=true)
@@ -118,19 +118,17 @@ save_plot(p7_9, joinpath(plot_dir, "ex7_fr_2003_9km.png"))
 matrix7_31 = nothing; matrix7_9 = nothing; GC.gc()
 
 # =====================================================================
-# Exemple 8 : Analyse de Tendance GLM Haute Resolution (Canada 9km)
-# /!\ AVERTISSEMENT RAM : Le calcul matriciel pixel-par-pixel sur la 
-# grille Canada à 9km est intensif. Restreint ici à un mois spécifique.
+# Exemple 8 : Analyse de Tendance GLM Haute Resolution (Canada 9km).
 # =====================================================================
-println("\n--- Exemple 8 : Tendances GLM Canada 9km (Juillet, 2010-2020) ---")
+println("\n--- Exemple 8 : Tendances GLM Canada 9km 1950-2025) ---")
 
-matrix8 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 2010:2020; mode=:yearly, selected_months=7)
+matrix8 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 1950:2025; mode=:yearly)
 
 # Calcul du modèle de régression linéaire sur la matrice haute résolution
 slope8, pvalue8 = calculate_trends_glm(matrix8, weight_canada_9)
 
 # Filtrage et visualisation des pentes significatives (p <= 0.05)
-p8_glm = glm_visu_trend(slope8, pvalue8; p_value=0.05, weights_file=weight_canada_9)
+p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9)
 save_plot(p8_glm, joinpath(plot_dir, "ex8_ca_glm_9km.png"))
 
 matrix8 = nothing; slope8 = nothing; pvalue8 = nothing; GC.gc()
@@ -174,10 +172,10 @@ matrix10_winter = nothing; matrix10_summer = nothing; GC.gc()
 # =====================================================================
 println("\n--- Exemple 11 : Dynamique journalière Canada 31km (Janvier 2018) ---")
 
-# Génération d'une carte par jour pour observer la propagation spatiale des fronts froids
-matrix11 = compute_general_climatology(data_folder_ca_31, weight_canada_31, 2018; mode=:daily, selected_months=1)
+# Génération d'une carte par heure pour observer la propagation spatiale des vagues de froids en janvier
+matrix11 = compute_general_climatology(data_folder_ca_31, weight_canada_31, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
 
-plot_file11 = joinpath(plot_dir, "ex11_ca_daily_propagation_31km.gif")
+plot_file11 = joinpath(plot_dir, "ex11_ca_hourly_propagation_31km.gif")
 animate_climatology(matrix11, weight_canada_31, filename=plot_file11)
 
 matrix11 = nothing; GC.gc()
