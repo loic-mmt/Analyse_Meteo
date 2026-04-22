@@ -6,6 +6,7 @@ include("dataset2load.jl")
 using StateSpaceModels
 using CategoricalArrays
 using LinearAlgebra
+using NPZ
 
 # Test corrélation variance/moyenne : Objectif détermination modèle additif/multiplicatif
 
@@ -21,13 +22,51 @@ for index in 1950:2025
 end
 cor(vect_vars, vect_means)
 
+# Calculate the correlation coefficient for the annotation
+r_score = cor(vect_means, vect_vars)
+
+# Generate the scatter plot
+p_diagnostic = scatter(
+    vect_means, 
+    vect_vars,
+    title="Thermodynamic Independence: Mean vs. Variance (1950-2025)",
+    xlabel="Annual Mean Temperature (μ)",
+    ylabel="Annual Variance (σ²)",
+    color=:darkblue,
+    markersize=5,
+    markerstrokewidth=0.5,
+    grid=true,
+    gridalpha=0.3,
+    legend=:topleft
+)
+
+# Add a linear regression line to visually prove the lack of trend
+# smooth=true automatically fits a local regression (LOESS) or linear trend depending on the backend
+scatter!(
+    vect_means, 
+    vect_vars, 
+    smooth=true, 
+    linecolor=:red, 
+    linewidth=2, 
+    label="Trend Line"
+)
+
+# Annotate the plot with the Pearson correlation score
+annotate!(
+    p_diagnostic, 
+    minimum(vect_means) + 0.1, 
+    maximum(vect_vars) - 0.5, 
+    text("Pearson r = $(round(r_score, digits=3))", :left, 10, :black)
+)
+
+# Render the plot
+display(p_diagnostic)
+
 #Ajouter plot
 
 #0.05 de score de coefficiant de Pearson, on peut donc supposer l'additivité du modèle. 
 # Pas de corrélation entre moyenne et variance.
 
-
-using NPZ
 npzwrite("month_mean_serie.npy", monthly_mean_series)
 npzwrite("cycle_serie.npy", z_french_cycle)
 npzwrite("ea_serie.npy", z_empirical_ea)
