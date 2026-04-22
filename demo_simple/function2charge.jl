@@ -467,6 +467,64 @@ function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing, 
     return p
 end
 
+
+"""
+    vizumap(data_2d, weights_file)
+
+Génère une carte thermique statique (Heatmap) à partir de données 2D ou de la première 
+couche temporelle d'un cube 3D.
+
+Applique un masque géographique via le fichier des poids.
+
+# Arguments
+- `data_2d` : Données spatiales en matrice (si 3D, sélectionne uniquement `[:, :, 1]`).
+- `weights_file::String` : Fichier contenant la matrice des poids (frac) et les coordonnées lat/lon.
+
+# Retourne
+- `p` : L'objet Plot généré.
+"""
+function vizumap(data_2d, weights_file)
+    ds = NCDataset(weights_file)
+    weights = ds["weights_frac"][:,:]
+    lats = ds["latitude"][:]
+    lons = ds["longitude"][:]
+    close(ds)
+    
+    valid_data = filter(!ismissing, data_2d)
+    if isempty(valid_data)
+        println("Error: Data contains only NaNs.")
+        return
+    end
+    current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
+    
+    # --- Inline Masking ---
+    current_map[weights .< 0.5] .= NaN
+    
+    # --- Inline Axis Alignment ---
+    idx_lon, idx_lat = sortperm(lons), sortperm(lats)
+    x_plot, y_plot = lons[idx_lon], lats[idx_lat]
+    z_plot = current_map[idx_lat, idx_lon]
+    
+    min_val, max_val = minimum(valid_data), maximum(valid_data)
+    
+    p = heatmap(
+        x_plot,
+        y_plot,
+        z_plot,
+        title = "Temperature",
+        clims = (min_val, max_val),
+        c = :thermal,
+        xlabel = "Longitude",
+        ylabel = "Latitude",
+        aspect_ratio = :equal,
+        right_margin = 5Plots.mm,
+        yflip = false
+    )
+            
+    return p
+end
+
+
 """
     calculate_trends_glm(data_3d, weights_file)
 
@@ -653,60 +711,4 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
     # 4. Save the GIF
     gif(anim, filename, fps = 5) 
     println("Saved animation to $filename")
-end
-
-"""
-    vizumap(data_2d, weights_file)
-
-Génère une carte thermique statique (Heatmap) à partir de données 2D ou de la première 
-couche temporelle d'un cube 3D.
-
-Applique un masque géographique via le fichier des poids.
-
-# Arguments
-- `data_2d` : Données spatiales en matrice (si 3D, sélectionne uniquement `[:, :, 1]`).
-- `weights_file::String` : Fichier contenant la matrice des poids (frac) et les coordonnées lat/lon.
-
-# Retourne
-- `p` : L'objet Plot généré.
-"""
-function vizumap(data_2d, weights_file)
-    ds = NCDataset(weights_file)
-    weights = ds["weights_frac"][:,:]
-    lats = ds["latitude"][:]
-    lons = ds["longitude"][:]
-    close(ds)
-    
-    valid_data = filter(!ismissing, data_2d)
-    if isempty(valid_data)
-        println("Error: Data contains only NaNs.")
-        return
-    end
-    current_map = (ndims(data_2d) == 3) ? data_2d[:, :, 1]' : data_2d'
-    
-    # --- Inline Masking ---
-    current_map[weights .< 0.5] .= NaN
-    
-    # --- Inline Axis Alignment ---
-    idx_lon, idx_lat = sortperm(lons), sortperm(lats)
-    x_plot, y_plot = lons[idx_lon], lats[idx_lat]
-    z_plot = current_map[idx_lat, idx_lon]
-    
-    min_val, max_val = minimum(valid_data), maximum(valid_data)
-    
-    p = heatmap(
-        x_plot,
-        y_plot,
-        z_plot,
-        title = "Temperature",
-        clims = (min_val, max_val),
-        c = :thermal,
-        xlabel = "Longitude",
-        ylabel = "Latitude",
-        aspect_ratio = :equal,
-        right_margin = 5Plots.mm,
-        yflip = false
-    )
-            
-    return p
 end
