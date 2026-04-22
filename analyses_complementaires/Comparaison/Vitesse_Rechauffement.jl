@@ -4,6 +4,8 @@ using Statistics
 using Distributions
 using Printf
 using Plots
+using StatsBase        # autocor()
+using HypothesisTests  # JarqueBeraTest
 
 # 1. CONFIGURATION ET CHEMINS
 project_dir = abspath(joinpath(@__DIR__, "..", ".."))
@@ -142,4 +144,119 @@ if p_diff < 0.05
     println("\n→ La différence est statistiquement significative : la France chauffe plus vite.")
 else
     println("\n→ La différence n'est pas significative au seuil 5%.")
+end
+# FONCTION 1 — Durbin-Watson
+# Détecte l'autocorrélation des résidus
+# DW ≈ 2 → OK   |   DW < 1.5 → autocorrélation positive (problème)
+function durbin_watson(resid)
+    return sum((resid[2:end] .- resid[1:end-1]).^2) / sum(resid.^2)
+end
+
+# FONCTION 2 — Correction de la variance pour l'autocorrélation
+# Gonfle l'erreur standard si rho lag-1 est significatif
+function effective_se(resid, se_ols, n)
+    rho     = autocor(resid, [1])[1]
+    n_eff   = max(n * (1 - rho) / (1 + rho), 2.0)
+    inflation = sqrt(n / n_eff)
+    return se_ols * inflation, rho, n_eff
+end
+# FONCTION 3 — Mann-Kendall (non-paramétrique)
+# Robuste à l'autocorrélation, ne suppose pas la normalité
+function mann_kendall(y)
+    n = length(y)
+    S = 0
+    for i in 1:n-1
+        for j in i+1:n
+            S += sign(y[j] - y[i])
+        end
+    end
+    varS  = n * (n - 1) * (2n + 5) / 18
+    z     = S == 0 ? 0.0 : (S > 0 ? (S - 1) : (S + 1)) / sqrt(varS)
+    p_bi  = 2 * (1 - cdf(Normal(0, 1), abs(z)))
+    p_one = 1 - cdf(Normal(0, 1), z)
+    return S, z, p_bi, p_one
+end
+
+# CALCUL DES RÉSIDUS 
+resid_fr = temp_fr .- pred_fr
+resid_ca = temp_ca .- pred_ca
+n        = length(YEARS)
+t95      = quantile(TDist(n - 2), 0.975)
+ 
+# TEST 1 — Normalité des résidus (Jarque-Bera)
+jb_fr   = JarqueBeraTest(resid_fr)
+jb_ca   = JarqueBeraTest(resid_ca)
+p_jb_fr = pvalue(jb_fr)
+p_jb_ca = pvalue(jb_ca)
+ 
+# TEST 2 — Autocorrélation (Durbin-Watson)
+dw_fr = durbin_watson(resid_fr)
+dw_ca = durbin_watson(resid_ca)
+
+# CORRECTION — Erreurs standards corrigées de l'autocorrélation
+se_fr_corr, rho_fr, neff_fr = effective_se(resid_fr, se_fr, n)
+se_ca_corr, rho_ca, neff_ca = effective_se(resid_ca, se_ca, n)
+ 
+ic_fr_corr = t95 * se_fr_corr * 10   # IC à 95% en °C/décennie
+ic_ca_corr = t95 * se_ca_corr * 10
+ 
+# TEST 3 — Mann-Kendall
+S_fr, z_fr, p_mk_fr, p_mk_fr_one = mann_kendall(temp_fr)
+S_ca, z_ca, p_mk_ca, p_mk_ca_one = mann_kendall(temp_ca)
+ 
+# TEST 4 — Différence de pentes CORRIGÉE (SE effectives)
+se_diff_corr = sqrt(se_fr_corr^2 + se_ca_corr^2)
+z_diff_corr  = diff_slope / se_diff_corr
+p_diff_corr  = 1 - cdf(Normal(0, 1), z_diff_corr)
+ 
+# Chevauchement des IC
+overlap = (s_fr_dec - ic_fr_corr < s_ca_dec + ic_ca_corr) &&
+          (s_ca_dec - ic_ca_corr < s_fr_dec + ic_fr_corr)
+ 
+# AFFICHAGE
+@printf("TEST 1 — NORMALITÉ DES RÉSIDUS (Jarque-Bera) ===\n")
+@printf("France : p = %.3f  → %s\n", p_jb_fr, p_jb_fr > 0.05 ? "✓ Normalité acceptée" : "✗ Normalité rejetée !")
+@printf("Canada : p = %.3f  → %s\n", p_jb_ca, p_jb_ca > 0.05 ? "✓ Normalité acceptée" : "✗ Normalité rejetée !")
+ 
+@printf(" TEST 2 — AUTOCORRÉLATION DES RÉSIDUS (Durbin-Watson) ===\n")
+@printf("France : DW = %.3f  (rho lag-1 = %.3f, N_eff = %.1f / %d)\n", dw_fr, rho_fr, neff_fr, n)
+@printf("Canada : DW = %.3f  (rho lag-1 = %.3f, N_eff = %.1f / %d)\n", dw_ca, rho_ca, neff_ca, n)
+println("  DW ≈ 2 : pas d'autocorrélation  |  DW < 1.5 : autocorrélation détectée")
+ 
+@printf(" INTERVALLES DE CONFIANCE 95%% CORRIGÉS ===\n")
+@printf("France : %.3f ± %.3f °C/déc\n", s_fr_dec, ic_fr_corr)
+@printf("Canada : %.3f ± %.3f °C/déc\n", s_ca_dec, ic_ca_corr)
+println(overlap ?
+    "   IC se chevauchent → différence non concluante sur ce critère" :
+    "   IC ne se chevauchent pas")
+ 
+@printf(" TEST 3 — MANN-KENDALL (non-paramétrique) ===\n")
+@printf("France : S = %d, z = %.2f, p (unilatéral ↑) = %.4f  → %s\n",
+    S_fr, z_fr, p_mk_fr_one, p_mk_fr_one < 0.05 ? "✓ Tendance significative" : "✗ Non significatif")
+@printf("Canada : S = %d, z = %.2f, p (unilatéral ↑) = %.4f  → %s\n",
+    S_ca, z_ca, p_mk_ca_one, p_mk_ca_one < 0.05 ? "✓ Tendance significative" : "✗ Non significatif")
+ 
+@printf(" TEST 4 — DIFFÉRENCE DE PENTES CORRIGÉE ===\n")
+@printf("OLS brut   : z = %.2f, p = %.4f\n", z_score, p_diff)
+@printf("Corrigé AC : z = %.2f, p = %.4f\n", z_diff_corr, p_diff_corr)
+
+crit1  = p_mk_fr_one < 0.05
+crit2  = p_mk_ca_one < 0.05
+crit3  = p_diff_corr < 0.05
+crit4  = !overlap
+n_crit = sum([crit1, crit2, crit3, crit4])
+ 
+@printf("\n=== CONCLUSION RIGOUREUSE (%d/4 critères validés) ===\n", n_crit)
+@printf("  [%s] Mann-Kendall France significatif\n",     crit1 ? "✓" : "✗")
+@printf("  [%s] Mann-Kendall Canada significatif\n",     crit2 ? "✓" : "✗")
+@printf("  [%s] Différence de pentes corrigée p<0.05\n", crit3 ? "✓" : "✗")
+@printf("  [%s] IC 95%% ne se chevauchent pas\n",        crit4 ? "✓" : "✗")
+ 
+if n_crit >= 3
+    @printf("\n→ La France se réchauffe %.2f× plus vite que le Canada.\n", ratio)
+    println("   Conclusion robuste (≥ 3 critères validés).")
+elseif n_crit == 2
+    println("\n→ Tendance France > Canada probable mais non fermement établie.")
+else
+    println("\n→ La différence France/Canada n'est PAS statistiquement établie.")
 end
