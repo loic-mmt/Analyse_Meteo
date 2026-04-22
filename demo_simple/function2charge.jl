@@ -244,7 +244,7 @@ Un tuple `(final_3d_matrix, valid_times)`.
 function finalize_cube(sums_dict, counts_dict, weights, mode)
 
     # 1. Prepare Mask
-    weights = weights'
+    weights = weights
     visual_mask = fill(NaN, size(weights))
     visual_mask[weights .> 0.0] .= 1.0
 
