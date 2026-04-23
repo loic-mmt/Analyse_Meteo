@@ -407,14 +407,14 @@ Trace l'évolution temporelle des températures et modélise les tendances.
 # Retourne
 - `p` : L'objet Plot généré.
 """
-function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing, window=Nothing, titre ="Climate Trends Analysis")
+function trends_climate(means::Vector{Float64}; trend = false, cutting=Nothing, window=Nothing, title ="Climate Trends Analysis")
     # Creation du dataframe pour les models et transfer en vecteur des années
     years_vec = Vector(1:length(means))
     df = DataFrame(Year = years_vec, Temp = means)
 
     # plot de base (scatter points)
     p = plot(df.Year, df.Temp,
-        title = titre,
+        title = title,
         xlabel = "Time Index", ylabel = "Temperature (°C)",
         label = "Observed Means",
         seriestype = :scatter, 
@@ -602,7 +602,7 @@ Masque automatiquement les données non significatives où la p-value dépasse l
 # Retourne
 - `p` : L'objet Plot de type Heatmap.
 """
-function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing, titre="Significant Warming Trends, p-value= $p_value")
+function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArray{Float64, 2}; p_value=0.05, weights_file=nothing, title="Significant Warming Trends, p-value= $p_value")
 
     # 2. Filter: Keep only significant trends (95% confidence)
     # We set non-significant pixels to NaN so they don't show up
@@ -626,7 +626,7 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
         x_plot,
         y_plot,
         z_plot,
-        title = titre,
+        title = title,
         c = :balance,
         clims = (-limit, limit),
         #clims = (-0.065, 0.065),
@@ -653,7 +653,7 @@ de toute la période pour assurer la cohérence visuelle.
 # Retourne
 - Aucune valeur (Sauvegarde le fichier localement).
 """
-function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif", titre = "Carte des températures à l'indice $i")
+function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3}, weights_file; filename="temperature_evolution.gif", title = "Carte des températures à l'indice $i")
     
     println("Generating animation...")
 
@@ -696,7 +696,7 @@ function animate_climatology(data_3d::AbstractArray{<:Union{Missing, Float64}, 3
             x_plot,
             y_plot,
             z_plot,
-            title = titre,
+            title = title,
             clims = (min_val, max_val),
             c = :thermal,   # Color palette
             xlabel = "Longitude",
