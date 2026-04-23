@@ -29,7 +29,7 @@ r_score = cor(vect_means, vect_vars)
 p_diagnostic = scatter(
     vect_means, 
     vect_vars,
-    title="Thermodynamic Independence: Mean vs. Variance (1950-2025)",
+    title="Independence Test : Mean vs Variance",
     xlabel="Annual Mean Temperature (μ)",
     ylabel="Annual Variance (σ²)",
     color=:darkblue,
@@ -37,25 +37,21 @@ p_diagnostic = scatter(
     markerstrokewidth=0.5,
     grid=true,
     gridalpha=0.3,
-    legend=:topleft
+    legend=:topleft,
+    label="Annual Observations",
+    smooth=true, 
+    linecolor=:red, 
+    linewidth=2, 
 )
 
 # Add a linear regression line to visually prove the lack of trend
 # smooth=true automatically fits a local regression (LOESS) or linear trend depending on the backend
-scatter!(
-    vect_means, 
-    vect_vars, 
-    smooth=true, 
-    linecolor=:red, 
-    linewidth=2, 
-    label="Trend Line"
-)
 
 # Annotate the plot with the Pearson correlation score
 annotate!(
     p_diagnostic, 
-    minimum(vect_means) + 0.1, 
-    maximum(vect_vars) - 0.5, 
+    minimum(vect_means) + 2.5, 
+    maximum(vect_vars) - 1.1, 
     text("Pearson r = $(round(r_score, digits=3))", :left, 10, :black)
 )
 

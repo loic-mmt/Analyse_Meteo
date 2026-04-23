@@ -127,8 +127,8 @@ matrix8 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 1950:20
 # Calcul du modèle de régression linéaire sur la matrice haute résolution
 slope8, pvalue8 = calculate_trends_glm(matrix8, weight_canada_9)
 
-# Filtrage et visualisation des pentes significatives (p <= 0.05)
-p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9)
+# Filtrage et visualisation des pentes
+p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9, p_value=1.0)
 save_plot(p8_glm, joinpath(plot_dir, "ex8_ca_glm_9km.png"))
 
 matrix8 = nothing; slope8 = nothing; pvalue8 = nothing; GC.gc()
