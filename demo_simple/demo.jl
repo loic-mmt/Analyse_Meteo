@@ -156,14 +156,14 @@ matrix10_winter = compute_general_climatology(data_folder_ca_31, weight_canada_3
 vector10_winter = means_vector_calculation(matrix10_winter, weight_canada_31)
 
 p10_winter = trends_climate(vector10_winter, trend=true)
-save_plot(p10_winter, joinpath(plot_dir, "ex10_ca_winter_trends_9km.png"))
+save_plot(p10_winter, joinpath(plot_dir, "ex10_ca_winter_trends_31km.png"))
 
 # Extraction pour la période estivale stricte (Juin, Juil, Aout)
 matrix10_summer = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[6, 7, 8])
 vector10_summer = means_vector_calculation(matrix10_summer, weight_canada_31)
 
 p10_summer = trends_climate(vector10_summer, trend=true)
-save_plot(p10_summer, joinpath(plot_dir, "ex10_ca_summer_trends_9km.png"))
+save_plot(p10_summer, joinpath(plot_dir, "ex10_ca_summer_trends_31km.png"))
 
 matrix10_winter = nothing; matrix10_summer = nothing; GC.gc()
 
