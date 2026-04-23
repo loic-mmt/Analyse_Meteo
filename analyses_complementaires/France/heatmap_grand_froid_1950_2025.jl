@@ -15,13 +15,13 @@ using Proj # Reprojection vers WGS84
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 # Données température
-const data_folder_precise = joinpath(PROJECT_ROOT, "data", "france", "france_9")
-const data_folder_basic = joinpath(PROJECT_ROOT, "data", "france", "france_9_31")
-const data_folder_temporel = joinpath(PROJECT_ROOT, "data", "raw_monthly_combined", "precise")
+const data_folder_precise = joinpath(PROJECT_ROOT, "data", "france", "france_31")
+const data_folder_basic = joinpath(PROJECT_ROOT, "data", "france", "france_31")
+const data_folder_temporel = joinpath(PROJECT_ROOT,  "data", "france", "france_31")
 # Fichiers de poids
 const weight_prop_basic = joinpath(PROJECT_ROOT, "data", "masks", "weights_france_31.nc")
-const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_france_9.nc")
-const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_prop_precise.nc")
+const weight_prop_precise = joinpath(PROJECT_ROOT, "data", "masks", "weights_france_31.nc")
+const weight_temporel = joinpath(PROJECT_ROOT, "data", "masks", "weights_france_31.nc")
 
 # Dossier de sortie des figures
 const plot_dir = joinpath(@__DIR__, "plot")
