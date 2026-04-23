@@ -128,7 +128,7 @@ matrix8 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 1950:20
 slope8, pvalue8 = calculate_trends_glm(matrix8, weight_canada_9)
 
 # Filtrage et visualisation des pentes
-p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9, p_value=1.0)
+p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9)
 save_plot(p8_glm, joinpath(plot_dir, "ex8_ca_glm_9km.png"))
 
 matrix8 = nothing; slope8 = nothing; pvalue8 = nothing; GC.gc()
@@ -149,18 +149,18 @@ matrix9 = nothing; GC.gc()
 # =====================================================================
 # Exemple 10 : Serie Temporelle Comparative (Canada 31km vs 9km)
 # =====================================================================
-println("\n--- Exemple 10 : Séries temporelles Canada 9km (Hiver vs Ete, 2015-2020) ---")
+println("\n--- Exemple 10 : Séries temporelles Canada 9km (Hiver vs Ete, 1995-2025) ---")
 
 # Extraction pour la période hivernale stricte (Dec, Jan, Fev)
-matrix10_winter = compute_general_climatology(data_folder_ca_9, weight_canada_9, 2015:2020; mode=:yearly, selected_months=[12, 1, 2])
-vector10_winter = means_vector_calculation(matrix10_winter, weight_canada_9)
+matrix10_winter = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[12, 1, 2])
+vector10_winter = means_vector_calculation(matrix10_winter, weight_canada_31)
 
 p10_winter = trends_climate(vector10_winter, trend=true)
 save_plot(p10_winter, joinpath(plot_dir, "ex10_ca_winter_trends_9km.png"))
 
 # Extraction pour la période estivale stricte (Juin, Juil, Aout)
-matrix10_summer = compute_general_climatology(data_folder_ca_9, weight_canada_9, 2015:2020; mode=:yearly, selected_months=[6, 7, 8])
-vector10_summer = means_vector_calculation(matrix10_summer, weight_canada_9)
+matrix10_summer = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[6, 7, 8])
+vector10_summer = means_vector_calculation(matrix10_summer, weight_canada_31)
 
 p10_summer = trends_climate(vector10_summer, trend=true)
 save_plot(p10_summer, joinpath(plot_dir, "ex10_ca_summer_trends_9km.png"))
