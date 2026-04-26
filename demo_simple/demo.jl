@@ -269,7 +269,7 @@ println("\n--- Exemple 11 : Dynamique France 9km (Janvier 2018) ---")
 matrix11 = compute_general_climatology(data_folder_fr_9, weight_france_9, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
 
 plot_file11 = joinpath(plot_dir, "ex11_fr_hourly_propagation_9km.gif")
-animate_climatology(matrix11, weight_canada_31, filename=plot_file11, title="Evolution Températures Janvier 2018 France")
+animate_climatology(matrix11, weight_france_9, filename=plot_file11, title="Evolution Températures Janvier 2018 France")
 
 matrix11 = nothing; GC.gc()
 
@@ -277,9 +277,9 @@ matrix11 = nothing; GC.gc()
 println("\n--- Exemple 11 : Dynamique Canada 31km (Janvier 2018) ---")
  
 # Génération d'une carte par heure pour observer la propagation spatiale des vagues de froids en janvier
-matrix11_ca = compute_general_climatology(data_folder_ca_31, weight_canada_31, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
+matrix11_ca = compute_general_climatology(data_folder_ca_9, weight_canada_9, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
  
 plot_file11_ca = joinpath(plot_dir, "ex11_ca_hourly_propagation_31km.gif")
-animate_climatology(matrix11_ca, weight_canada_31, filename=plot_file11_ca, title="Evolution Températures Janvier 2018 Canada")
+animate_climatology(matrix11_ca, weight_canada_9, filename=plot_file11_ca, title="Evolution Températures Janvier 2018 Canada")
  
 matrix11_ca = nothing; GC.gc()
