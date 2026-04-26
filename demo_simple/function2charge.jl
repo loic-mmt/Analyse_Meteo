@@ -483,7 +483,7 @@ Applique un masque géographique via le fichier des poids.
 # Retourne
 - `p` : L'objet Plot généré.
 """
-function vizumap(data_2d, weights_file, titre="Temperatures")
+function vizumap(data_2d, weights_file; title="Temperatures")
     ds = NCDataset(weights_file)
     weights = ds["weights_frac"][:,:]
     lats = ds["latitude"][:]
@@ -511,7 +511,7 @@ function vizumap(data_2d, weights_file, titre="Temperatures")
         x_plot,
         y_plot,
         z_plot,
-        title = titre,
+        title = title,
         clims = (min_val, max_val),
         c = :thermal,
         xlabel = "Longitude",
@@ -628,8 +628,8 @@ function glm_visu_trend(slope_map::AbstractArray{Float64, 2}, p_map::AbstractArr
         z_plot,
         title = title,
         c = :balance,
-        clims = (-limit, limit),
-        #clims = (-0.065, 0.065),
+        #clims = (-limit, limit),
+        clims = (-0.1, 0.1),
         yflip = false,
         aspect_ratio = :equal
     )

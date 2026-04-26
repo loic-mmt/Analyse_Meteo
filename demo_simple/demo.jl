@@ -83,10 +83,10 @@ save_plot(p4, joinpath(plot_dir, "ex4_trends_window5.png"))
 
 slope4, pvalue4 = calculate_trends_glm(matrix4, weight_france_31)
 
-p4_glm_005 = glm_visu_trend(slope4, pvalue4; weights_file=weight_france_31)
+p4_glm_005 = glm_visu_trend(slope4, pvalue4; weights_file=weight_france_31, title="Tendances GLM France - Janvier (15-31) p<0.05")
 save_plot(p4_glm_005, joinpath(plot_dir, "ex4_glm_p005.png"))
 
-p4_glm_015 = glm_visu_trend(slope4, pvalue4; p_value=0.15, weights_file=weight_france_31)
+p4_glm_015 = glm_visu_trend(slope4, pvalue4; p_value=0.15, weights_file=weight_france_31, title="Tendances GLM France - Janvier (15-31) p<0.15")
 save_plot(p4_glm_015, joinpath(plot_dir, "ex4_glm_p015.png"))
 
 matrix4 = nothing; slope4 = nothing; pvalue4 = nothing; GC.gc()
@@ -173,12 +173,12 @@ println("\n--- Exemple 7 : Resolution 31km vs 9km (France, Aout 2003) ---")
 
 # Calcul sur la grille standard (31km)
 matrix7_31 = compute_general_climatology(data_folder_fr_31, weight_france_31, 2003; selected_months=8, selected_days=1:15, mode=:total)
-p7_31 = vizumap(matrix7_31, weight_france_31)
+p7_31 = vizumap(matrix7_31, weight_france_31, title="31km Température Moyenne France 1-15 Août 2003")
 save_plot(p7_31, joinpath(plot_dir, "ex7_fr_2003_31km.png"))
 
 # Calcul sur la grille haute resolution (9km)
 matrix7_9 = compute_general_climatology(data_folder_fr_9, weight_france_9, 2003; selected_months=8, selected_days=1:15, mode=:total)
-p7_9 = vizumap(matrix7_9, weight_france_9)
+p7_9 = vizumap(matrix7_9, weight_france_9, title="9km Température Moyenne France 1-15 Août 2003")
 save_plot(p7_9, joinpath(plot_dir, "ex7_fr_2003_9km.png"))
 
 # Liberation memoire immediate
@@ -188,18 +188,31 @@ matrix7_31 = nothing; matrix7_9 = nothing; GC.gc()
 # =====================================================================
 # Exemple 8 : Analyse de Tendance GLM Haute Resolution (Canada 9km).
 # =====================================================================
-#println("\n--- Exemple 8 : Tendances GLM Canada 9km 1950-2025) ---")
+println("\n--- Exemple 8 : Tendances GLM Canada 9km 1950-2025) ---")
 
-#matrix8 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 1950:2025; mode=:yearly)
+matrix8 = compute_general_climatology(data_folder_ca_9, weight_canada_9, 1950:2025; mode=:yearly)
 
 # Calcul du modèle de régression linéaire sur la matrice haute résolution
-#slope8, pvalue8 = calculate_trends_glm(matrix8, weight_canada_9)
+slope8, pvalue8 = calculate_trends_glm(matrix8, weight_canada_9)
 
 # Filtrage et visualisation des pentes
-#p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9)
-#save_plot(p8_glm, joinpath(plot_dir, "ex8_ca_glm_9km.png"))
+p8_glm = glm_visu_trend(slope8, pvalue8; weights_file=weight_canada_9, title="Tendances GLM canada 1950-2025")
+save_plot(p8_glm, joinpath(plot_dir, "ex8_ca_glm_9km.png"))
 
-#matrix8 = nothing; slope8 = nothing; pvalue8 = nothing; GC.gc()
+matrix8 = nothing; slope8 = nothing; pvalue8 = nothing; GC.gc()
+
+# Analyse de Tendance GLM Haute Resolution (France 9km).
+
+matrix8b = compute_general_climatology(data_folder_fr_9, weight_france_9, 1950:2025; mode=:yearly)
+
+# Calcul du modèle de régression linéaire sur la matrice haute résolution
+slope8b, pvalue8b = calculate_trends_glm(matrix8b, weight_france_9)
+
+# Filtrage et visualisation des pentes
+p8b_glm = glm_visu_trend(slope8b, pvalue8b; weights_file=weight_france_9, title="Tendances GLM France 1950-2025")
+save_plot(p8b_glm, joinpath(plot_dir, "ex8_fr_glm_9km_scale.png"))
+
+matrix8b = nothing; slope8b = nothing; pvalue8b = nothing; GC.gc()
 
 # =====================================================================
 # Exemple 9 : Animation Haute Résolution Mensuelle (France 9km - 2022)
@@ -210,58 +223,39 @@ println("\n--- Exemple 9 : Animation Mensuelle France 9km (2022) ---")
 matrix9 = compute_general_climatology(data_folder_fr_9, weight_france_9, 2022; mode=:monthly)
 
 plot_file9 = joinpath(plot_dir, "ex9_fr_animation_9km.gif")
-animate_climatology(matrix9, weight_france_9, filename=plot_file9)
+animate_climatology(matrix9, weight_france_9, filename=plot_file9, title = "Evolution Températures Mensuelles France 2022")
 
 matrix9 = nothing; GC.gc()
 
 # ===== Canada =====
-#println("\n--- Exemple 9 : Animation Mensuelle Canada 9km (2022) ---")
+println("\n--- Exemple 9 : Animation Mensuelle Canada 9km (2022) ---")
  
 # Extraction des moyennes mensuelles successives
-#matrix9_ca = compute_general_climatology(data_folder_ca_9, weight_canada_9, 2022; mode=:monthly)
+matrix9_ca = compute_general_climatology(data_folder_ca_9, weight_canada_9, 2022; mode=:monthly)
  
-#plot_file9_ca = joinpath(plot_dir, "ex9_ca_animation_9km.gif")
-#animate_climatology(matrix9_ca, weight_canada_9, filename=plot_file9_ca, title="Evolution mensuelle 2022 - Canada 9km")
+plot_file9_ca = joinpath(plot_dir, "ex9_ca_animation_9km.gif")
+animate_climatology(matrix9_ca, weight_canada_9, filename=plot_file9_ca, title = "Evolution Températures Mensuelles Canada 2022")
  
-#matrix9_ca = nothing; GC.gc()
+matrix9_ca = nothing; GC.gc()
 
 # =====================================================================
-# Exemple 10 : Serie Temporelle Comparative (Canada 31km vs 9km)
+# Exemple 10 : Serie Temporelle Comparative (Canada été contre hiver)
 # =====================================================================
-println("\n--- Exemple 10 : Séries temporelles Canada 9km (Hiver vs Ete, 1995-2025) ---")
 
-# Extraction pour la période hivernale stricte (Dec, Jan, Fev)
-matrix10_winter = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[12, 1, 2])
-vector10_winter = means_vector_calculation(matrix10_winter, weight_canada_31)
-
-p10_winter = trends_climate(vector10_winter, trend=true)
-save_plot(p10_winter, joinpath(plot_dir, "ex10_ca_winter_trends_31km.png"))
-
-# Extraction pour la période estivale stricte (Juin, Juil, Aout)
-matrix10_summer = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[6, 7, 8])
-vector10_summer = means_vector_calculation(matrix10_summer, weight_canada_31)
-
-p10_summer = trends_climate(vector10_summer, trend=true)
-save_plot(p10_summer, joinpath(plot_dir, "ex10_ca_summer_trends_31km.png"))
-
-matrix10_winter = nothing; matrix10_summer = nothing; GC.gc()
-
-
-# ===== Canada =====
 println("\n--- Exemple 10 : Séries temporelles Canada (Hiver vs Ete, 1995-2025) ---")
  
 # Extraction pour la période hivernale stricte (Dec, Jan, Fev)
 matrix10_ca_winter = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[12, 1, 2])
 vector10_ca_winter = means_vector_calculation(matrix10_ca_winter, weight_canada_31)
  
-p10_ca_winter = trends_climate(vector10_ca_winter, trend=true, title="Tendances hivernales Canada 1995-2025 (DJF - régression linéaire)")
+p10_ca_winter = trends_climate(vector10_ca_winter, trend=true, title="Tendances hivernales Canada 1995-2025")
 save_plot(p10_ca_winter, joinpath(plot_dir, "ex10_ca_winter_trends_31km.png"))
  
 # Extraction pour la période estivale stricte (Juin, Juil, Aout)
 matrix10_ca_summer = compute_general_climatology(data_folder_ca_31, weight_canada_31, 1995:2025; mode=:yearly, selected_months=[6, 7, 8])
 vector10_ca_summer = means_vector_calculation(matrix10_ca_summer, weight_canada_31)
  
-p10_ca_summer = trends_climate(vector10_ca_summer, trend=true, title="Tendances estivales Canada 1995-2025 (JJA - régression linéaire)")
+p10_ca_summer = trends_climate(vector10_ca_summer, trend=true, title="Tendances estivales Canada 1995-2025")
 save_plot(p10_ca_summer, joinpath(plot_dir, "ex10_ca_summer_trends_31km.png"))
  
 matrix10_ca_winter = nothing; matrix10_ca_summer = nothing; GC.gc()
@@ -269,25 +263,23 @@ matrix10_ca_winter = nothing; matrix10_ca_summer = nothing; GC.gc()
 # =====================================================================
 # Exemple 11 : Dynamique Horizontale Haute Résolution (Canada 31km)
 # =====================================================================
-println("\n--- Exemple 11 : Dynamique journalière Canada 31km (Janvier 2018) ---")
+println("\n--- Exemple 11 : Dynamique France 9km (Janvier 2018) ---")
 
 # Génération d'une carte par heure pour observer la propagation spatiale des vagues de froids en janvier
-matrix11 = compute_general_climatology(data_folder_ca_31, weight_canada_31, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
+matrix11 = compute_general_climatology(data_folder_fr_9, weight_france_9, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
 
-plot_file11 = joinpath(plot_dir, "ex11_ca_hourly_propagation_31km.gif")
-animate_climatology(matrix11, weight_canada_31, filename=plot_file11)
+plot_file11 = joinpath(plot_dir, "ex11_fr_hourly_propagation_9km.gif")
+animate_climatology(matrix11, weight_canada_31, filename=plot_file11, title="Evolution Températures Janvier 2018 France")
 
 matrix11 = nothing; GC.gc()
 
 # ===== Canada =====
-println("\n--- Exemple 11 : Dynamique journalière Canada 31km (Janvier 2018) ---")
+println("\n--- Exemple 11 : Dynamique Canada 31km (Janvier 2018) ---")
  
 # Génération d'une carte par heure pour observer la propagation spatiale des vagues de froids en janvier
 matrix11_ca = compute_general_climatology(data_folder_ca_31, weight_canada_31, 2018; mode=:hourly, selected_months=1, selected_hours=[0,6,12,18])
  
 plot_file11_ca = joinpath(plot_dir, "ex11_ca_hourly_propagation_31km.gif")
-animate_climatology(matrix11_ca, weight_canada_31, filename=plot_file11_ca, title="Dynamique horaire Canada - Janvier 2018 (vague de froid)")
+animate_climatology(matrix11_ca, weight_canada_31, filename=plot_file11_ca, title="Evolution Températures Janvier 2018 Canada")
  
 matrix11_ca = nothing; GC.gc()
-
-println("\nExécution des démonstrations terminée. Graphiques générés dans : $plot_dir")
